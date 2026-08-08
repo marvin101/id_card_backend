@@ -3,11 +3,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
-class SchoolClassCreate(BaseModel):
+class SectionCreate(BaseModel):
     name: str
 
 
-class SchoolClassResponse(BaseModel):
+class SectionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     uuid: UUID
