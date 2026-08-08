@@ -6,6 +6,7 @@ from app.api.users import router as users_router
 from app.core.database import get_db
 from app.api.auth import router as auth_router
 from app.api.schools import router as schools_router
+from app.api.academic_sessions import router as academic_sessions_router
 
 app = FastAPI(
     title="School ID Card API",
@@ -14,6 +15,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(schools_router)
+app.include_router(academic_sessions_router)
 # ==========================================================
 # Health Check
 # ==========================================================
