@@ -358,3 +358,214 @@ def get_student(
         )
 
     return student
+
+
+# ==========================================================
+# Update Student
+# ==========================================================
+
+@router.put(
+    "/{student_uuid}",
+    response_model=StudentResponse,
+)
+def update_student(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    student_data: StudentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Check permission
+    # ------------------------------------------------------
+
+    if access.role != "admin" and not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a school administrator can update students",
+        )
+
+    # ------------------------------------------------------
+    # Find student
+    # ------------------------------------------------------
+
+    student = db.execute(
+        select(Student).where(
+            Student.uuid == student_uuid,
+            Student.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found",
+        )
+
+    # ------------------------------------------------------
+    # Update academic session
+    # ------------------------------------------------------
+
+    if student_data.session_uuid is not None:
+        session = db.execute(
+            select(AcademicSession).where(
+                AcademicSession.uuid == student_data.session_uuid,
+                AcademicSession.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Academic session not found in this school",
+            )
+
+        student.session_id = session.id
+
+    # ------------------------------------------------------
+    # Update class
+    # ------------------------------------------------------
+
+    if student_data.class_uuid is not None:
+        school_class = db.execute(
+            select(SchoolClass).where(
+                SchoolClass.uuid == student_data.class_uuid,
+                SchoolClass.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if school_class is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Class not found in this school",
+            )
+
+        student.class_id = school_class.id
+
+    # ------------------------------------------------------
+    # Update section
+    # ------------------------------------------------------
+
+    if student_data.section_uuid is not None:
+        section = db.execute(
+            select(Section).where(
+                Section.uuid == student_data.section_uuid,
+                Section.class_id == student.class_id,
+            )
+        ).scalar_one_or_none()
+
+        if section is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Section not found in this class",
+            )
+
+        student.section_id = section.id
+
+    # ------------------------------------------------------
+    # Update admission number
+    # ------------------------------------------------------
+
+    if student_data.admission_no is not None:
+        existing_student = db.execute(
+            select(Student).where(
+                Student.school_id == school.id,
+                Student.session_id == student.session_id,
+                Student.admission_no == student_data.admission_no,
+                Student.id != student.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_student is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Admission number already exists for this academic session",
+            )
+
+        student.admission_no = student_data.admission_no
+
+    # ------------------------------------------------------
+    # Update remaining fields
+    # ------------------------------------------------------
+
+    if student_data.roll_no is not None:
+        student.roll_no = student_data.roll_no
+
+    if student_data.stream is not None:
+        student.stream = student_data.stream
+
+    if student_data.full_name is not None:
+        student.full_name = student_data.full_name
+
+    if student_data.father_name is not None:
+        student.father_name = student_data.father_name
+
+    if student_data.mother_name is not None:
+        student.mother_name = student_data.mother_name
+
+    if student_data.dob is not None:
+        student.dob = student_data.dob
+
+    if student_data.gender is not None:
+        student.gender = student_data.gender
+
+    if student_data.blood_group is not None:
+        student.blood_group = student_data.blood_group
+
+    if student_data.mobile is not None:
+        student.mobile = student_data.mobile
+
+    if student_data.aadhaar is not None:
+        student.aadhaar = student_data.aadhaar
+
+    if student_data.address is not None:
+        student.address = student_data.address
+
+    if student_data.photo_path is not None:
+        student.photo_path = student_data.photo_path
+
+    if student_data.is_active is not None:
+        student.is_active = student_data.is_active
+
+    # ------------------------------------------------------
+    # Save changes
+    # ------------------------------------------------------
+
+    db.commit()
+    db.refresh(student)
+
+    return student
