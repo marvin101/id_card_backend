@@ -569,3 +569,89 @@ def update_student(
     db.refresh(student)
 
     return student
+
+# ==========================================================
+# Delete Student
+# ==========================================================
+
+@router.delete(
+    "/{student_uuid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_student(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Check permission
+    # ------------------------------------------------------
+
+    if access.role != "admin" and not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a school administrator can delete students",
+        )
+
+    # ------------------------------------------------------
+    # Find student
+    # ------------------------------------------------------
+
+    student = db.execute(
+        select(Student).where(
+            Student.uuid == student_uuid,
+            Student.school_id == school.id,
+            Student.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found",
+        )
+
+    # ------------------------------------------------------
+    # Soft delete
+    # ------------------------------------------------------
+
+    student.is_active = False
+
+    db.commit()
+
+    return None
