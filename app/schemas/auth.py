@@ -10,6 +10,9 @@ class UserCreate(BaseModel):
     mobile: str | None = None
     is_platform_admin: bool = False
 
+class SchoolAccessCreate(BaseModel):
+    role: str
+
 
 class UserResponse(BaseModel):
     uuid: UUID
