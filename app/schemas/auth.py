@@ -1,5 +1,6 @@
 from uuid import UUID
 from pydantic import BaseModel
+from typing import Literal
 
 
 class UserCreate(BaseModel):
@@ -11,7 +12,7 @@ class UserCreate(BaseModel):
     is_platform_admin: bool = False
 
 class SchoolAccessCreate(BaseModel):
-    role: str
+    role: SchoolRole
 
 
 class UserResponse(BaseModel):
@@ -32,3 +33,14 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
+
+class SchoolAccessResponse(BaseModel):
+    user_uuid: UUID
+    school_uuid: UUID
+    school_name: str
+    role: SchoolRole
+
+class SchoolAccessUpdate(BaseModel):
+    role: SchoolRole
+
+SchoolRole = Literal["admin", "teacher", "staff"]

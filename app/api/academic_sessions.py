@@ -12,6 +12,7 @@ from app.schemas.academic_session import (
     AcademicSessionCreate,
     AcademicSessionResponse,
 )
+from uuid import UUID
 
 
 router = APIRouter(
@@ -30,7 +31,7 @@ router = APIRouter(
     status_code=status.HTTP_201_CREATED,
 )
 def create_academic_session(
-    school_uuid: str,
+    school_uuid: UUID,
     session_data: AcademicSessionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -136,7 +137,7 @@ def create_academic_session(
     response_model=list[AcademicSessionResponse],
 )
 def list_academic_sessions(
-    school_uuid: str,
+    school_uuid: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -187,3 +188,69 @@ def list_academic_sessions(
     )
 
     return result.scalars().all()
+# ==========================================================
+# Get Academic Session
+# ==========================================================
+
+@router.get(
+    "/{session_uuid}",
+    response_model=AcademicSessionResponse,
+)
+def get_academic_session(
+    school_uuid: UUID,
+    session_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find the school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Find academic session
+    # ------------------------------------------------------
+
+    academic_session = db.execute(
+        select(AcademicSession).where(
+            AcademicSession.uuid == session_uuid,
+            AcademicSession.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if academic_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Academic session not found",
+        )
+
+    return academic_session

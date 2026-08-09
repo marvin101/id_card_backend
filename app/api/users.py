@@ -8,8 +8,13 @@ from app.core.security import get_current_user, hash_password
 from app.models.users import User
 from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
-from app.schemas.auth import  SchoolAccessCreate, UserCreate, UserResponse
-
+from app.schemas.auth import  (
+    SchoolAccessCreate, 
+    SchoolAccessResponse, 
+    SchoolAccessUpdate, 
+    UserCreate, 
+    UserResponse
+    )
 router = APIRouter(
     prefix="/users",
     tags=["Users"],
@@ -162,3 +167,253 @@ def grant_school_access(
         "school_uuid": school.uuid,
         "role": access.role,
     }
+# ==========================================================
+# List User's School Access
+# ==========================================================
+
+@router.get(
+    "/{user_uuid}/schools",
+    response_model=list[SchoolAccessResponse],
+)
+def list_user_school_access(
+    user_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find target user
+    # ------------------------------------------------------
+
+    user = db.execute(
+        select(User).where(
+            User.uuid == user_uuid,
+            User.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # ------------------------------------------------------
+    # Check permission
+    # ------------------------------------------------------
+
+    if (
+        current_user.id != user.id
+        and not current_user.is_platform_admin
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to view this user's school access",
+        )
+
+    # ------------------------------------------------------
+    # Find school access records
+    # ------------------------------------------------------
+
+    result = db.execute(
+        select(
+            UserSchoolAccess,
+            School,
+        )
+        .join(
+            School,
+            School.id == UserSchoolAccess.school_id,
+        )
+        .where(
+            UserSchoolAccess.user_id == user.id,
+            School.is_active.is_(True),
+        )
+        .order_by(School.school_name)
+    )
+
+    # ------------------------------------------------------
+    # Build response
+    # ------------------------------------------------------
+
+    return [
+        SchoolAccessResponse(
+            user_uuid=user.uuid,
+            school_uuid=school.uuid,
+            school_name=school.school_name,
+            role=access.role,
+        )
+        for access, school in result.all()
+    ]
+# ==========================================================
+# Update User School Access
+# ==========================================================
+
+@router.put(
+    "/{user_uuid}/schools/{school_uuid}",
+    response_model=SchoolAccessResponse,
+)
+def update_school_access(
+    user_uuid: UUID,
+    school_uuid: UUID,
+    access_data: SchoolAccessUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Check platform admin permission
+    # ------------------------------------------------------
+
+    if not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a platform administrator can update school access",
+        )
+
+    # ------------------------------------------------------
+    # Find target user
+    # ------------------------------------------------------
+
+    user = db.execute(
+        select(User).where(
+            User.uuid == user_uuid,
+            User.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # ------------------------------------------------------
+    # Find school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Find existing access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Update role
+    # ------------------------------------------------------
+
+    access.role = access_data.role
+
+    db.commit()
+    db.refresh(access)
+
+    return SchoolAccessResponse(
+        user_uuid=user.uuid,
+        school_uuid=school.uuid,
+        school_name=school.school_name,
+        role=access.role,
+    )
+# ==========================================================
+# Revoke User School Access
+# ==========================================================
+
+@router.delete(
+    "/{user_uuid}/schools/{school_uuid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_school_access(
+    user_uuid: UUID,
+    school_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Check platform admin permission
+    # ------------------------------------------------------
+
+    if not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a platform administrator can revoke school access",
+        )
+
+    # ------------------------------------------------------
+    # Find target user
+    # ------------------------------------------------------
+
+    user = db.execute(
+        select(User).where(
+            User.uuid == user_uuid,
+            User.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # ------------------------------------------------------
+    # Find school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Find existing access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User does not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Revoke access
+    # ------------------------------------------------------
+
+    db.delete(access)
+    db.commit()
+
+    return None
