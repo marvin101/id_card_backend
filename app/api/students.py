@@ -151,6 +151,26 @@ def create_student(
         )
 
     # ------------------------------------------------------
+    # Check duplicate roll number
+    # ------------------------------------------------------
+
+    if student_data.roll_no is not None:
+        existing_roll = db.execute(
+            select(Student).where(
+                Student.school_id == school.id,
+                Student.session_id == session.id,
+                Student.class_id == school_class.id,
+                Student.roll_no == student_data.roll_no,
+            )
+        ).scalar_one_or_none()
+
+        if existing_roll is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Roll number already exists for this class in this academic session",
+            )
+
+    # ------------------------------------------------------
     # Create student
     # ------------------------------------------------------
 
