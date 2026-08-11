@@ -13,6 +13,7 @@ from app.models.users import User
 from app.schemas.school_class import (
     SchoolClassCreate,
     SchoolClassResponse,
+    SchoolClassUpdate,
 )
 
 
@@ -174,3 +175,174 @@ def list_classes(
     )
 
     return result.scalars().all()
+# ==========================================================
+# Get Class
+# ==========================================================
+
+@router.get(
+    "/{class_uuid}",
+    response_model=SchoolClassResponse,
+)
+def get_class(
+    school_uuid: UUID,
+    class_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find the school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Find class
+    # ------------------------------------------------------
+
+    school_class = db.execute(
+        select(SchoolClass).where(
+            SchoolClass.uuid == class_uuid,
+            SchoolClass.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if school_class is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Class not found",
+        )
+
+    return school_class
+# ==========================================================
+# Update Class
+# ==========================================================
+
+@router.put(
+    "/{class_uuid}",
+    response_model=SchoolClassResponse,
+)
+def update_class(
+    school_uuid: UUID,
+    class_uuid: UUID,
+    class_data: SchoolClassUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find the school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Only school admin can update classes
+    # ------------------------------------------------------
+
+    if access.role != "admin" and not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a school administrator can update classes",
+        )
+
+    # ------------------------------------------------------
+    # Find class
+    # ------------------------------------------------------
+
+    school_class = db.execute(
+        select(SchoolClass).where(
+            SchoolClass.uuid == class_uuid,
+            SchoolClass.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if school_class is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Class not found",
+        )
+
+    # ------------------------------------------------------
+    # Check duplicate class name
+    # ------------------------------------------------------
+
+    if class_data.name is not None:
+        existing_class = db.execute(
+            select(SchoolClass).where(
+                SchoolClass.school_id == school.id,
+                SchoolClass.name == class_data.name,
+                SchoolClass.id != school_class.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_class is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Class already exists",
+            )
+
+        school_class.name = class_data.name
+
+    # ------------------------------------------------------
+    # Save changes
+    # ------------------------------------------------------
+
+    db.commit()
+    db.refresh(school_class)
+
+    return school_class

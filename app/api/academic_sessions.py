@@ -11,6 +11,7 @@ from app.models.users import User
 from app.schemas.academic_session import (
     AcademicSessionCreate,
     AcademicSessionResponse,
+    AcademicSessionUpdate,
 )
 from uuid import UUID
 
@@ -252,5 +253,161 @@ def get_academic_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Academic session not found",
         )
+
+    return academic_session
+# ==========================================================
+# Update Academic Session
+# ==========================================================
+
+@router.put(
+    "/{session_uuid}",
+    response_model=AcademicSessionResponse,
+)
+def update_academic_session(
+    school_uuid: str,
+    session_uuid: UUID,
+    session_data: AcademicSessionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # ------------------------------------------------------
+    # Find the school
+    # ------------------------------------------------------
+
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    # ------------------------------------------------------
+    # Check user's access to the school
+    # ------------------------------------------------------
+
+    access = db.execute(
+        select(UserSchoolAccess).where(
+            UserSchoolAccess.user_id == current_user.id,
+            UserSchoolAccess.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+        )
+
+    # ------------------------------------------------------
+    # Only school admin can update academic sessions
+    # ------------------------------------------------------
+
+    if access.role != "admin" and not current_user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a school administrator can update academic sessions",
+        )
+
+    # ------------------------------------------------------
+    # Find the session and verify it belongs to this school
+    # ------------------------------------------------------
+
+    academic_session = db.execute(
+        select(AcademicSession).where(
+            AcademicSession.uuid == session_uuid,
+            AcademicSession.school_id == school.id,
+        )
+    ).scalar_one_or_none()
+
+    if academic_session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Academic session not found in this school",
+        )
+
+    # ------------------------------------------------------
+    # Check duplicate session name (excluding this session)
+    # ------------------------------------------------------
+
+    if session_data.name is not None:
+        existing_session = db.execute(
+            select(AcademicSession).where(
+                AcademicSession.school_id == school.id,
+                AcademicSession.name == session_data.name,
+                AcademicSession.id != academic_session.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_session is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Academic session already exists",
+            )
+
+        academic_session.name = session_data.name
+
+    # ------------------------------------------------------
+    # Validate and apply dates
+    # ------------------------------------------------------
+
+    new_start_date = (
+        session_data.start_date
+        if session_data.start_date is not None
+        else academic_session.start_date
+    )
+
+    new_end_date = (
+        session_data.end_date
+        if session_data.end_date is not None
+        else academic_session.end_date
+    )
+
+    if (
+        new_start_date is not None
+        and new_end_date is not None
+        and new_end_date < new_start_date
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date cannot be earlier than start_date",
+        )
+
+    if session_data.start_date is not None:
+        academic_session.start_date = session_data.start_date
+
+    if session_data.end_date is not None:
+        academic_session.end_date = session_data.end_date
+
+    # ------------------------------------------------------
+    # Handle is_current toggle
+    # ------------------------------------------------------
+
+    if session_data.is_current is not None:
+        if session_data.is_current:
+            other_current_sessions = db.execute(
+                select(AcademicSession).where(
+                    AcademicSession.school_id == school.id,
+                    AcademicSession.is_current.is_(True),
+                    AcademicSession.id != academic_session.id,
+                )
+            ).scalars().all()
+
+            for other_session in other_current_sessions:
+                other_session.is_current = False
+
+        academic_session.is_current = session_data.is_current
+
+    # ------------------------------------------------------
+    # Save changes
+    # ------------------------------------------------------
+
+    db.commit()
+    db.refresh(academic_session)
 
     return academic_session

@@ -12,3 +12,6 @@ class SchoolClassResponse(BaseModel):
 
     uuid: UUID
     name: str
+
+class SchoolClassUpdate(BaseModel):
+    name: str | None = None
