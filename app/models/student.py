@@ -50,12 +50,22 @@ class Student(Base):
     # ==========================================================
 
     __table_args__ = (
-        UniqueConstraint(
-            "school_id",
-            "session_id",
-            "admission_no",
-            name="uq_student_admission_school_session",
-        ),
+    # Admission number is permanently unique within a school.
+    UniqueConstraint(
+        "school_id",
+        "admission_no",
+        name="uq_student_admission_school",
+    ),
+
+    # Roll number is unique within a school,
+    # academic session and class.
+    UniqueConstraint(
+        "school_id",
+        "session_id",
+        "class_id",
+        "roll_no",
+        name="uq_student_roll_school_session_class",
+    ),
 
         ForeignKeyConstraint(
             ["school_id", "session_id"],

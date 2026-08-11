@@ -140,7 +140,6 @@ def create_student(
     existing_student = db.execute(
         select(Student).where(
             Student.school_id == school.id,
-            Student.session_id == session.id,
             Student.admission_no == student_data.admission_no,
         )
     ).scalar_one_or_none()
@@ -148,7 +147,7 @@ def create_student(
     if existing_student is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Admission number already exists for this academic session",
+            detail="Admission number already exists in this school",
         )
 
     # ------------------------------------------------------
@@ -497,6 +496,7 @@ def update_student(
         student.section_id = section.id
 
     # ------------------------------------------------------
+    # ------------------------------------------------------
     # Update admission number
     # ------------------------------------------------------
 
@@ -504,7 +504,6 @@ def update_student(
         existing_student = db.execute(
             select(Student).where(
                 Student.school_id == school.id,
-                Student.session_id == student.session_id,
                 Student.admission_no == student_data.admission_no,
                 Student.id != student.id,
             )
@@ -513,10 +512,30 @@ def update_student(
         if existing_student is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Admission number already exists for this academic session",
+                detail="Admission number already exists in this school",
             )
 
         student.admission_no = student_data.admission_no
+    # ------------------------------------------------------
+    # Validate roll number
+    # ------------------------------------------------------
+
+    if student_data.roll_no is not None:
+        existing_roll = db.execute(
+            select(Student).where(
+                Student.school_id == school.id,
+                Student.session_id == student.session_id,
+                Student.class_id == student.class_id,
+                Student.roll_no == student_data.roll_no,
+                Student.id != student.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_roll is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Roll number already exists for this class in this academic session",
+            )
 
     # ------------------------------------------------------
     # Update remaining fields

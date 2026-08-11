@@ -12,3 +12,6 @@ class SectionResponse(BaseModel):
 
     uuid: UUID
     name: str
+
+class SectionUpdate(BaseModel):
+    name: str | None = None
