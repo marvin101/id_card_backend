@@ -75,6 +75,19 @@ def list_my_schools(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # Platform admins can see all active schools.
+    if current_user.is_platform_admin:
+        result = db.execute(
+            select(School)
+            .where(
+                School.is_active.is_(True),
+            )
+            .order_by(School.school_name)
+        )
+
+        return result.scalars().all()
+
+    # Normal users can see only schools they have access to.
     result = db.execute(
         select(School)
         .join(
