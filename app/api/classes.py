@@ -6,9 +6,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.school import School
+from app.core.school_access import (
+    get_active_school,
+    require_school_access,
+    require_school_admin,
+)
 from app.models.school_class import SchoolClass
-from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.schemas.school_class import (
     SchoolClassCreate,
@@ -38,52 +41,13 @@ def create_class(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user'"'"'s access to the school
+    # Check school administrator access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
+    require_school_admin(db, current_user, school.id, 'Only a school administrator can create classes')
 
-    if access is None and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
-
-    # ------------------------------------------------------
-    # Only school admin can create classes
-    # ------------------------------------------------------
-
-    if (
-        not current_user.is_platform_admin
-        and (access is None or access.role != "admin")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a school administrator can create classes",
-        )
 
     # ------------------------------------------------------
     # Check duplicate class name
@@ -131,39 +95,12 @@ def list_classes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user'"'"'s access
+    # Check school access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
-
-    if access is None and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+    require_school_access(db, current_user, school.id)
 
     # ------------------------------------------------------
     # Get all classes
@@ -192,39 +129,12 @@ def get_class(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user'"'"'s access
+    # Check school access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
-
-    if access is None and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+    require_school_access(db, current_user, school.id)
 
     # ------------------------------------------------------
     # Find class
@@ -261,52 +171,13 @@ def update_class(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user'"'"'s access to the school
+    # Check school administrator access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
+    require_school_admin(db, current_user, school.id, 'Only a school administrator can update classes')
 
-    if access is None and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
-
-    # ------------------------------------------------------
-    # Only school admin can update classes
-    # ------------------------------------------------------
-
-    if (
-        not current_user.is_platform_admin
-        and (access is None or access.role != "admin")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a school administrator can update classes",
-        )
 
     # ------------------------------------------------------
     # Find class
@@ -370,52 +241,13 @@ def delete_class(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user'"'"'s access
+    # Check school administrator access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
+    require_school_admin(db, current_user, school.id, 'Only a school administrator can delete classes')
 
-    if access is None and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
-
-    # ------------------------------------------------------
-    # Only school admin can delete classes
-    # ------------------------------------------------------
-
-    if (
-        not current_user.is_platform_admin
-        and (access is None or access.role != "admin")
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a school administrator can delete classes",
-        )
 
     # ------------------------------------------------------
     # Find class

@@ -4,9 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.school_access import (
+    get_active_school,
+    require_school_access,
+    require_school_admin,
+)
 from app.models.academic_session import AcademicSession
-from app.models.school import School
-from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.schemas.academic_session import (
     AcademicSessionCreate,
@@ -37,49 +40,13 @@ def create_academic_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user's access to the school
+    # Check school administrator access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
+    require_school_admin(db, current_user, school.id, 'Only a school administrator can create academic sessions')
 
-    if access is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
-
-    # ------------------------------------------------------
-    # Only school admin can create academic sessions
-    # ------------------------------------------------------
-
-    if access.role != "admin" and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a school administrator can create academic sessions",
-        )
 
     # ------------------------------------------------------
     # Check duplicate session name
@@ -142,39 +109,12 @@ def list_academic_sessions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user's access
+    # Check school access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
-
-    if access is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+    require_school_access(db, current_user, school.id)
 
     # ------------------------------------------------------
     # Return sessions
@@ -203,39 +143,12 @@ def get_academic_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user's access
+    # Check school access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
-
-    if access is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+    require_school_access(db, current_user, school.id)
 
     # ------------------------------------------------------
     # Find academic session
@@ -270,49 +183,13 @@ def update_academic_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    school = get_active_school(db, school_uuid)
     # ------------------------------------------------------
-    # Find the school
-    # ------------------------------------------------------
-
-    school = db.execute(
-        select(School).where(
-            School.uuid == school_uuid,
-            School.is_active.is_(True),
-        )
-    ).scalar_one_or_none()
-
-    if school is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
-
-    # ------------------------------------------------------
-    # Check user's access to the school
+    # Check school administrator access
     # ------------------------------------------------------
 
-    access = db.execute(
-        select(UserSchoolAccess).where(
-            UserSchoolAccess.user_id == current_user.id,
-            UserSchoolAccess.school_id == school.id,
-        )
-    ).scalar_one_or_none()
+    require_school_admin(db, current_user, school.id, 'Only a school administrator can update academic sessions')
 
-    if access is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
-
-    # ------------------------------------------------------
-    # Only school admin can update academic sessions
-    # ------------------------------------------------------
-
-    if access.role != "admin" and not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a school administrator can update academic sessions",
-        )
 
     # ------------------------------------------------------
     # Find the session and verify it belongs to this school

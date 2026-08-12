@@ -1,8 +1,18 @@
 from datetime import date
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+class BloodGroup(str, Enum):
+        A_POSITIVE = "A+"
+        A_NEGATIVE = "A-"
+        B_POSITIVE = "B+"
+        B_NEGATIVE = "B-"
+        AB_POSITIVE = "AB+"
+        AB_NEGATIVE = "AB-"
+        O_POSITIVE = "O+"
+        O_NEGATIVE = "O-"
 
 class StudentCreate(BaseModel):
     # ------------------------------------------------------
@@ -26,7 +36,9 @@ class StudentCreate(BaseModel):
     mother_name: str | None = None
     dob: date | None = None
     gender: str | None = None
-    blood_group: str | None = None
+    blood_group: BloodGroup | None = None
+
+    
 
     # ------------------------------------------------------
     # Contact Information
@@ -56,7 +68,7 @@ class StudentUpdate(BaseModel):
     mother_name: str | None = None
     dob: date | None = None
     gender: str | None = None
-    blood_group: str | None = None
+    blood_group: BloodGroup | None = None
 
     mobile: str | None = None
     aadhaar: str | None = None
