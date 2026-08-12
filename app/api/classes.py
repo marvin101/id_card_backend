@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.school import School
-from app.models.section import Section
 from app.models.school_class import SchoolClass
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
@@ -57,7 +56,7 @@ def create_class(
         )
 
     # ------------------------------------------------------
-    # Check user's access to the school
+    # Check user'"'"'s access to the school
     # ------------------------------------------------------
 
     access = db.execute(
@@ -67,7 +66,7 @@ def create_class(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -77,7 +76,10 @@ def create_class(
     # Only school admin can create classes
     # ------------------------------------------------------
 
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if (
+        not current_user.is_platform_admin
+        and (access is None or access.role != "admin")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can create classes",
@@ -147,7 +149,7 @@ def list_classes(
         )
 
     # ------------------------------------------------------
-    # Check user's access
+    # Check user'"'"'s access
     # ------------------------------------------------------
 
     access = db.execute(
@@ -157,25 +159,25 @@ def list_classes(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
         )
 
     # ------------------------------------------------------
-    # Return classes
+    # Get all classes
     # ------------------------------------------------------
 
     result = db.execute(
         select(SchoolClass)
-        .where(
-            SchoolClass.school_id == school.id,
-        )
+        .where(SchoolClass.school_id == school.id)
         .order_by(SchoolClass.name)
     )
 
     return result.scalars().all()
+
+
 # ==========================================================
 # Get Class
 # ==========================================================
@@ -208,7 +210,7 @@ def get_class(
         )
 
     # ------------------------------------------------------
-    # Check user's access
+    # Check user'"'"'s access
     # ------------------------------------------------------
 
     access = db.execute(
@@ -218,7 +220,7 @@ def get_class(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -242,6 +244,8 @@ def get_class(
         )
 
     return school_class
+
+
 # ==========================================================
 # Update Class
 # ==========================================================
@@ -275,7 +279,7 @@ def update_class(
         )
 
     # ------------------------------------------------------
-    # Check user's access
+    # Check user'"'"'s access to the school
     # ------------------------------------------------------
 
     access = db.execute(
@@ -285,7 +289,7 @@ def update_class(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -295,7 +299,10 @@ def update_class(
     # Only school admin can update classes
     # ------------------------------------------------------
 
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if (
+        not current_user.is_platform_admin
+        and (access is None or access.role != "admin")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can update classes",
@@ -347,6 +354,8 @@ def update_class(
     db.refresh(school_class)
 
     return school_class
+
+
 # ==========================================================
 # Delete Class
 # ==========================================================
@@ -379,7 +388,7 @@ def delete_class(
         )
 
     # ------------------------------------------------------
-    # Check user's access
+    # Check user'"'"'s access
     # ------------------------------------------------------
 
     access = db.execute(
@@ -389,7 +398,7 @@ def delete_class(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -399,14 +408,17 @@ def delete_class(
     # Only school admin can delete classes
     # ------------------------------------------------------
 
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if (
+        not current_user.is_platform_admin
+        and (access is None or access.role != "admin")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can delete classes",
         )
 
     # ------------------------------------------------------
-    # Find the class
+    # Find class
     # ------------------------------------------------------
 
     school_class = db.execute(
@@ -420,24 +432,6 @@ def delete_class(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Class not found",
-        )
-
-    # ------------------------------------------------------
-    # Check whether sections exist
-    # ------------------------------------------------------
-
-    sections_exist = db.execute(
-        select(Section.id)
-        .where(
-            Section.class_id == school_class.id,
-        )
-        .limit(1)
-    ).scalar_one_or_none()
-
-    if sections_exist is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete class because sections exist",
         )
 
     # ------------------------------------------------------

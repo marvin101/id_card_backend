@@ -1,3 +1,4 @@
+from os import access
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -66,17 +67,13 @@ def create_student(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
         )
 
-    # ------------------------------------------------------
-    # Check permission
-    # ------------------------------------------------------
-
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if not current_user.is_platform_admin and access.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can create students",
@@ -250,10 +247,16 @@ def list_students(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
+        )
+
+    if not current_user.is_platform_admin and access.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a school administrator can view students",
         )
 
     # ------------------------------------------------------
@@ -352,11 +355,11 @@ def get_student(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="You do not have access to this school",
+    )
 
     # ------------------------------------------------------
     # Find student
@@ -422,17 +425,13 @@ def update_student(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
         )
 
-    # ------------------------------------------------------
-    # Check permission
-    # ------------------------------------------------------
-
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if not current_user.is_platform_admin and access.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can update students",
@@ -651,17 +650,13 @@ def delete_student(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
         )
 
-    # ------------------------------------------------------
-    # Check permission
-    # ------------------------------------------------------
-
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if not current_user.is_platform_admin and access.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can delete students",

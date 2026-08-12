@@ -1,3 +1,4 @@
+from os import access
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -69,7 +70,7 @@ def create_section(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -79,7 +80,10 @@ def create_section(
     # Only school admin can create sections
     # ------------------------------------------------------
 
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if (
+    not current_user.is_platform_admin
+    and (access is None or access.role != "admin")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can create sections",
@@ -177,7 +181,7 @@ def list_sections(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -256,7 +260,7 @@ def get_section(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this school",
@@ -341,11 +345,14 @@ def update_section(
         )
     ).scalar_one_or_none()
 
-    if access is None:
+    if (
+    not current_user.is_platform_admin
+    and (access is None or access.role != "admin")
+):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this school",
-        )
+         status_code=status.HTTP_403_FORBIDDEN,
+         detail="Only a school administrator can update sections",
+    )
 
     # ------------------------------------------------------
     # Only school admin can update sections
@@ -446,11 +453,11 @@ def delete_section(
         )
     ).scalar_one_or_none()
 
-    if school is None:
+    if access is None and not current_user.is_platform_admin:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="School not found",
-        )
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this school",
+    )
 
     # ------------------------------------------------------
     # Check user's access
@@ -473,7 +480,10 @@ def delete_section(
     # Only school admin can delete sections
     # ------------------------------------------------------
 
-    if access.role != "admin" and not current_user.is_platform_admin:
+    if (
+    not current_user.is_platform_admin
+    and (access is None or access.role != "admin")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only a school administrator can delete sections",
