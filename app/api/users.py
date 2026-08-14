@@ -5,6 +5,12 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 from app.core.database import get_db
 from app.core.security import get_current_user, hash_password
+from app.core.school_access import (
+    LEGACY_SCHOOL_ADMIN_ROLE,
+    SCHOOL_ADMIN_ROLE,
+    is_platform_admin,
+    require_school_admin,
+)
 from app.models.users import User
 from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
@@ -54,6 +60,8 @@ def register_user(
         full_name=user_data.full_name,
         email=user_data.email,
         mobile=user_data.mobile,
+        designation=user_data.designation,
+        platform_role=None,
     )
 
     db.add(user)
@@ -88,14 +96,25 @@ def grant_school_access(
     current_user: User = Depends(get_current_user),
 ):
     # ------------------------------------------------------
-    # Check platform admin permission
+    # A school administrator may manage ordinary memberships only in their
+    # own school. Elevated memberships remain platform-admin-only.
     # ------------------------------------------------------
-
-    if not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a platform administrator can grant school access",
-        )
+    if not is_platform_admin(current_user):
+        if access_data.role not in {"teacher", "staff"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a platform administrator can assign this school role",
+            )
+        school_for_permission = db.execute(
+            select(School).where(
+                School.uuid == school_uuid,
+                School.is_active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if school_for_permission is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="School not found")
+        require_school_admin(db, current_user, school_for_permission.id,
+                             "Only a school administrator can grant access in this school")
 
     # ------------------------------------------------------
     # Find target user
@@ -201,20 +220,25 @@ def list_user_school_access(
     # Check permission
     # ------------------------------------------------------
 
-    if (
-        current_user.id != user.id
-        and not current_user.is_platform_admin
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have permission to view this user's school access",
-        )
+    managed_school_ids: list[int] | None = None
+    if current_user.id != user.id and not is_platform_admin(current_user):
+        # School admins may inspect memberships only for schools they
+        # administer. This permits local user management without exposing a
+        # person's access at other schools.
+        managed_school_ids = db.execute(
+            select(UserSchoolAccess.school_id).where(
+                UserSchoolAccess.user_id == current_user.id,
+                UserSchoolAccess.role.in_(
+                    {SCHOOL_ADMIN_ROLE, LEGACY_SCHOOL_ADMIN_ROLE}
+                ),
+            )
+        ).scalars().all()
 
     # ------------------------------------------------------
     # Find school access records
     # ------------------------------------------------------
 
-    result = db.execute(
+    statement = (
         select(
             UserSchoolAccess,
             School,
@@ -229,6 +253,13 @@ def list_user_school_access(
         )
         .order_by(School.school_name)
     )
+
+    if managed_school_ids is not None:
+        statement = statement.where(
+            UserSchoolAccess.school_id.in_(managed_school_ids)
+        )
+
+    result = db.execute(statement)
 
     # ------------------------------------------------------
     # Build response
@@ -259,15 +290,6 @@ def update_school_access(
     current_user: User = Depends(get_current_user),
 ):
     # ------------------------------------------------------
-    # Check platform admin permission
-    # ------------------------------------------------------
-
-    if not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a platform administrator can update school access",
-        )
-
     # ------------------------------------------------------
     # Find target user
     # ------------------------------------------------------
@@ -318,6 +340,15 @@ def update_school_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User does not have access to this school",
         )
+
+    if not is_platform_admin(current_user):
+        if access.role not in {"teacher", "staff"} or access_data.role not in {"teacher", "staff"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a platform administrator can manage elevated school roles",
+            )
+        require_school_admin(db, current_user, school.id,
+                             "Only a school administrator can update access in this school")
 
     # ------------------------------------------------------
     # Update role
@@ -349,15 +380,6 @@ def revoke_school_access(
     current_user: User = Depends(get_current_user),
 ):
     # ------------------------------------------------------
-    # Check platform admin permission
-    # ------------------------------------------------------
-
-    if not current_user.is_platform_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only a platform administrator can revoke school access",
-        )
-
     # ------------------------------------------------------
     # Find target user
     # ------------------------------------------------------
@@ -408,6 +430,15 @@ def revoke_school_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User does not have access to this school",
         )
+
+    if not is_platform_admin(current_user):
+        if access.role not in {"teacher", "staff"}:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only a platform administrator can revoke elevated school roles",
+            )
+        require_school_admin(db, current_user, school.id,
+                             "Only a school administrator can revoke access in this school")
 
     # ------------------------------------------------------
     # Revoke access

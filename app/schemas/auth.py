@@ -2,14 +2,7 @@ from uuid import UUID
 from pydantic import BaseModel
 from typing import Literal
 
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    full_name: str
-    email: str | None = None
-    mobile: str | None = None
-    is_platform_admin: bool = False
+SchoolRole = Literal["school_admin", "card_operator", "teacher", "staff"]
 
 class SchoolAccessCreate(BaseModel):
     role: SchoolRole
@@ -21,6 +14,8 @@ class UserResponse(BaseModel):
     full_name: str
     email: str | None = None
     mobile: str | None = None
+    designation: str | None = None
+    platform_role: str | None = None
     is_platform_admin: bool
     is_active: bool
 
@@ -38,9 +33,17 @@ class SchoolAccessResponse(BaseModel):
     user_uuid: UUID
     school_uuid: UUID
     school_name: str
-    role: SchoolRole
+    # A string keeps old ``admin`` rows readable until they are deliberately
+    # changed to ``school_admin`` by an administrator.
+    role: str
 
 class SchoolAccessUpdate(BaseModel):
     role: SchoolRole
 
-SchoolRole = Literal["admin", "teacher", "staff"]
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    full_name: str
+    email: str | None = None
+    mobile: str | None = None
+    designation: str | None = None

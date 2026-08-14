@@ -4,11 +4,13 @@ from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.models.school import School
     from app.models.users import User
+
 
 class UserSchoolAccess(Base):
     __tablename__ = "user_school_access"
@@ -73,10 +75,6 @@ class UserSchoolAccess(Base):
     # Relationships
     # ==========================================================
 
-    user: Mapped["User"] = relationship(
-        back_populates="school_access",
-    )
+    user: Mapped["User"] = relationship(back_populates="school_access")
 
-    school: Mapped["School"] = relationship(
-        back_populates="user_access",
-    )
+    school: Mapped["School"] = relationship(back_populates="user_access")

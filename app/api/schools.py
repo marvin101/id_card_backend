@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.core.school_access import is_platform_admin, require_platform_admin
 from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
@@ -30,6 +31,7 @@ def create_school(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_platform_admin(current_user)
     existing_school = db.execute(
         select(School).where(
             School.school_code == school_data.school_code
@@ -48,14 +50,6 @@ def create_school(
 
     db.add(school)
     db.flush()
-
-    access = UserSchoolAccess(
-        user_id=current_user.id,
-        school_id=school.id,
-        role="admin",
-    )
-
-    db.add(access)
 
     db.commit()
     db.refresh(school)
@@ -76,7 +70,7 @@ def list_my_schools(
     current_user: User = Depends(get_current_user),
 ):
     # Platform admins can see all active schools.
-    if current_user.is_platform_admin:
+    if is_platform_admin(current_user):
         result = db.execute(
             select(School)
             .where(

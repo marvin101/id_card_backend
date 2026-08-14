@@ -9,6 +9,28 @@ from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 
 
+PLATFORM_ADMIN_ROLE = "platform_admin"
+SCHOOL_ADMIN_ROLE = "school_admin"
+LEGACY_SCHOOL_ADMIN_ROLE = "admin"
+
+
+def is_platform_admin(user: User) -> bool:
+    """Return whether a user has platform-wide administrative authority.
+
+    The boolean remains a compatibility fallback until its data has been
+    migrated to ``platform_role`` and the application has been deployed.
+    """
+    return user.platform_role == PLATFORM_ADMIN_ROLE or user.is_platform_admin
+
+
+def require_platform_admin(current_user: User) -> None:
+    if not is_platform_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a platform administrator can perform this action",
+        )
+
+
 def get_active_school(db: Session, school_uuid: UUID) -> School:
     """Return an active school or raise 404."""
     school = db.execute(
@@ -33,7 +55,7 @@ def require_school_access(
     school_id: int,
 ) -> UserSchoolAccess | None:
     """Require access to the school; platform admins bypass school membership."""
-    if current_user.is_platform_admin:
+    if is_platform_admin(current_user):
         return None
 
     access = db.execute(
@@ -59,7 +81,7 @@ def require_school_admin(
     detail: str,
 ) -> UserSchoolAccess | None:
     """Require school-admin access; platform admins bypass school membership."""
-    if current_user.is_platform_admin:
+    if is_platform_admin(current_user):
         return None
 
     access = db.execute(
@@ -75,7 +97,9 @@ def require_school_admin(
             detail="You do not have access to this school",
         )
 
-    if access.role != "admin":
+    # ``admin`` is accepted only for access records that predate the role
+    # rename. New assignments are restricted by the request schema.
+    if access.role not in {SCHOOL_ADMIN_ROLE, LEGACY_SCHOOL_ADMIN_ROLE}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=detail,

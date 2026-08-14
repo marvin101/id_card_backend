@@ -69,14 +69,32 @@ class User(Base):
     )
 
     # ==========================================================
-    # Platform Administrator
+    # Platform Administration
     # ==========================================================
 
+    # Kept during the transition so existing administrators continue to work
+    # until the data migration has been applied everywhere.
     is_platform_admin: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
         server_default="false",
+    )
+
+    # The durable, explicit platform-level role.  School roles never belong
+    # here; they are stored in UserSchoolAccess.
+    platform_role: Mapped[str | None] = mapped_column(
+        String(30),
+        nullable=True,
+    )
+
+    # ==========================================================
+    # Designation
+    # ==========================================================
+
+    designation: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
     )
 
     # ==========================================================
@@ -121,6 +139,8 @@ class User(Base):
     # ==========================================================
 
     school_access: Mapped[list["UserSchoolAccess"]] = relationship(
+        "UserSchoolAccess",
         back_populates="user",
+        foreign_keys="UserSchoolAccess.user_id",
         cascade="all, delete-orphan",
     )
