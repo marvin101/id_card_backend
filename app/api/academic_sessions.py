@@ -233,15 +233,21 @@ def update_academic_session(
     # Validate and apply dates
     # ------------------------------------------------------
 
+    # ``None`` is meaningful here: it clears an existing date.
+    # ``model_fields_set`` lets us distinguish an omitted field from an
+    # explicitly supplied null value.
+    start_date_supplied = 'start_date' in session_data.model_fields_set
+    end_date_supplied = 'end_date' in session_data.model_fields_set
+
     new_start_date = (
         session_data.start_date
-        if session_data.start_date is not None
+        if start_date_supplied
         else academic_session.start_date
     )
 
     new_end_date = (
         session_data.end_date
-        if session_data.end_date is not None
+        if end_date_supplied
         else academic_session.end_date
     )
 
@@ -255,10 +261,10 @@ def update_academic_session(
             detail="end_date cannot be earlier than start_date",
         )
 
-    if session_data.start_date is not None:
+    if start_date_supplied:
         academic_session.start_date = session_data.start_date
 
-    if session_data.end_date is not None:
+    if end_date_supplied:
         academic_session.end_date = session_data.end_date
 
     # ------------------------------------------------------
