@@ -177,7 +177,7 @@ def get_academic_session(
     response_model=AcademicSessionResponse,
 )
 def update_academic_session(
-    school_uuid: str,
+    school_uuid: UUID,
     session_uuid: UUID,
     session_data: AcademicSessionUpdate,
     db: Session = Depends(get_db),
