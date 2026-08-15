@@ -18,6 +18,7 @@ from app.schemas.auth import  (
     SchoolAccessCreate, 
     SchoolAccessResponse, 
     SchoolAccessUpdate, 
+    SchoolUserAssignmentResponse,
     UserCreate, 
     UserResponse
     )
@@ -79,6 +80,80 @@ def get_my_profile(
     current_user: User = Depends(get_current_user),
 ):
     return current_user
+
+
+# ==========================================================
+# List Users and Their Assignment State for a School
+# ==========================================================
+
+@router.get(
+    "/schools/{school_uuid}/assignments",
+    response_model=list[SchoolUserAssignmentResponse],
+    summary="List users and assignment status for a school",
+    description=(
+        "Lists every active user account for the selected school. Users with "
+        "a school-access record include their role and are marked `assigned`; "
+        "all other active users are marked `pending_assignment`. Platform "
+        "administrators may view any school, while school administrators may "
+        "view only schools they administer."
+    ),
+    responses={
+        401: {"description": "Authentication is required."},
+        403: {"description": "The user cannot view this school's assignments."},
+        404: {"description": "School not found."},
+    },
+)
+def list_school_user_assignments(
+    school_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return a school-scoped user directory without exposing other memberships."""
+    school = db.execute(
+        select(School).where(
+            School.uuid == school_uuid,
+            School.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if school is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="School not found",
+        )
+
+    if not is_platform_admin(current_user):
+        require_school_admin(
+            db,
+            current_user,
+            school.id,
+            "Only a school administrator can view assignments in this school",
+        )
+
+    result = db.execute(
+        select(User, UserSchoolAccess.role)
+        .outerjoin(
+            UserSchoolAccess,
+            (UserSchoolAccess.user_id == User.id)
+            & (UserSchoolAccess.school_id == school.id),
+        )
+        .where(User.is_active.is_(True))
+        .order_by(User.full_name, User.username)
+    )
+
+    return [
+        SchoolUserAssignmentResponse(
+            user_uuid=user.uuid,
+            username=user.username,
+            full_name=user.full_name,
+            email=user.email,
+            mobile=user.mobile,
+            designation=user.designation,
+            role=role,
+            assignment_status="assigned" if role is not None else "pending_assignment",
+        )
+        for user, role in result.all()
+    ]
 
 # ==========================================================
 # Grant User Access to School

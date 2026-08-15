@@ -37,6 +37,20 @@ class SchoolAccessResponse(BaseModel):
     # changed to ``school_admin`` by an administrator.
     role: str
 
+
+class SchoolUserAssignmentResponse(BaseModel):
+    """A user and their assignment state for one selected school."""
+
+    user_uuid: UUID
+    username: str
+    full_name: str
+    email: str | None = None
+    mobile: str | None = None
+    designation: str | None = None
+    role: str | None = None
+    assignment_status: Literal["assigned", "pending_assignment"]
+
+
 class SchoolAccessUpdate(BaseModel):
     role: SchoolRole
 
