@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
+from app.models.student import Student
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.core.school_access import (
@@ -265,7 +265,24 @@ def delete_class(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Class not found",
         )
+        # ------------------------------------------------------
+    # Check whether students are assigned to this class
+    # ------------------------------------------------------
 
+    students_exist = db.execute(
+        select(Student.id)
+        .where(
+            Student.class_id == school_class.id,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if students_exist is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete class because students are assigned to it",
+        )
+    
     # ------------------------------------------------------
     # Delete class
     # ------------------------------------------------------

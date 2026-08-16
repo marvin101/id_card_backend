@@ -82,6 +82,10 @@ class StudentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     uuid: UUID
+    
+    session_uuid: UUID
+    class_uuid: UUID
+    section_uuid: UUID
 
     admission_no: str
     roll_no: str | None
