@@ -1,22 +1,31 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import get_current_user
+from app.core.file_storage import save_student_photo
 from app.core.school_access import (
     get_active_school,
     require_school_access,
     require_school_admin,
 )
+from app.core.security import get_current_user
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
 from app.models.student import Student
 from app.models.users import User
-from app.schemas import school
 from app.schemas.student import StudentCreate, StudentResponse, StudentUpdate
 
 
@@ -35,19 +44,37 @@ router = APIRouter(
     response_model=StudentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_student(
+async def create_student(
     school_uuid: UUID,
-    student_data: StudentCreate,
+    student_data_json: str = Form(...),
+    photo: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # ------------------------------------------------------
+    # Parse student JSON from multipart form data
+    # ------------------------------------------------------
+
+    try:
+        student_data = StudentCreate.model_validate_json(student_data_json)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid student data.",
+        ) from exc
+
     school = get_active_school(db, school_uuid)
+
     # ------------------------------------------------------
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(db, current_user, school.id, 'Only a school administrator can create students')
-
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can create students",
+    )
 
     # ------------------------------------------------------
     # Find academic session
@@ -134,7 +161,10 @@ def create_student(
         if existing_roll is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Roll number already exists for this class in this academic session",
+                detail=(
+                    "Roll number already exists for this class "
+                    "in this academic session"
+                ),
             )
 
     # ------------------------------------------------------
@@ -158,10 +188,41 @@ def create_student(
         mobile=student_data.mobile,
         aadhaar=student_data.aadhaar,
         address=student_data.address,
-        photo_path=student_data.photo_path,
+        photo_path=None,
     )
 
     db.add(student)
+
+    # Flush first so the generated student UUID is available.
+    db.flush()
+
+    # ------------------------------------------------------
+    # Save optional student photo
+    # ------------------------------------------------------
+
+    if photo is not None:
+        content = await photo.read()
+
+        try:
+            saved_photo_path = save_student_photo(
+                student_uuid=student.uuid,
+                content=content,
+                content_type=photo.content_type,
+            )
+        except ValueError as exc:
+            db.rollback()
+
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        student.photo_path = saved_photo_path
+
+    # ------------------------------------------------------
+    # Save changes
+    # ------------------------------------------------------
+
     db.commit()
     db.refresh(student)
 
@@ -186,16 +247,29 @@ def list_students(
         default=None,
         description="Filter by academic session",
     ),
+    class_uuid: UUID | None = Query(
+        default=None,
+        description="Filter by class",
+    ),
+    section_uuid: UUID | None = Query(
+        default=None,
+        description="Filter by section",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     school = get_active_school(db, school_uuid)
+
     # ------------------------------------------------------
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(db, current_user, school.id, 'Only a school administrator can view students')
-
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can view students",
+    )
 
     # ------------------------------------------------------
     # Build student query
@@ -241,6 +315,55 @@ def list_students(
         )
 
     # ------------------------------------------------------
+    # Filter by class
+    # ------------------------------------------------------
+
+    if class_uuid:
+        school_class = db.execute(
+            select(SchoolClass).where(
+                SchoolClass.uuid == class_uuid,
+                SchoolClass.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if school_class is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Class not found",
+            )
+
+        query = query.where(
+            Student.class_id == school_class.id
+        )
+
+    # ------------------------------------------------------
+    # Filter by section
+    # ------------------------------------------------------
+
+    if section_uuid:
+        section = db.execute(
+            select(Section)
+            .join(
+                SchoolClass,
+                SchoolClass.id == Section.class_id,
+            )
+            .where(
+                Section.uuid == section_uuid,
+                SchoolClass.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if section is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Section not found",
+            )
+
+        query = query.where(
+            Student.section_id == section.id
+        )
+
+    # ------------------------------------------------------
     # Order students
     # ------------------------------------------------------
 
@@ -266,6 +389,7 @@ def get_student(
     current_user: User = Depends(get_current_user),
 ):
     school = get_active_school(db, school_uuid)
+
     # ------------------------------------------------------
     # Check school access
     # ------------------------------------------------------
@@ -309,12 +433,17 @@ def update_student(
     current_user: User = Depends(get_current_user),
 ):
     school = get_active_school(db, school_uuid)
+
     # ------------------------------------------------------
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(db, current_user, school.id, 'Only a school administrator can update students')
-
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can update students",
+    )
 
     # ------------------------------------------------------
     # Find student
@@ -333,11 +462,27 @@ def update_student(
             detail="Student not found",
         )
 
+    fields_set = student_data.model_fields_set
+
     # ------------------------------------------------------
-    # Update academic session
+    # Determine target academic placement
     # ------------------------------------------------------
 
-    if student_data.session_uuid is not None:
+    target_session_id = student.session_id
+    target_class_id = student.class_id
+    target_section_id = student.section_id
+
+    # ------------------------------------------------------
+    # Validate session
+    # ------------------------------------------------------
+
+    if "session_uuid" in fields_set:
+        if student_data.session_uuid is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="session_uuid cannot be null",
+            )
+
         session = db.execute(
             select(AcademicSession).where(
                 AcademicSession.uuid == student_data.session_uuid,
@@ -351,13 +496,19 @@ def update_student(
                 detail="Academic session not found in this school",
             )
 
-        student.session_id = session.id
+        target_session_id = session.id
 
     # ------------------------------------------------------
-    # Update class
+    # Validate class
     # ------------------------------------------------------
 
-    if student_data.class_uuid is not None:
+    if "class_uuid" in fields_set:
+        if student_data.class_uuid is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="class_uuid cannot be null",
+            )
+
         school_class = db.execute(
             select(SchoolClass).where(
                 SchoolClass.uuid == student_data.class_uuid,
@@ -371,34 +522,83 @@ def update_student(
                 detail="Class not found in this school",
             )
 
-        student.class_id = school_class.id
+        target_class_id = school_class.id
 
     # ------------------------------------------------------
-    # Update section
+    # Validate section
     # ------------------------------------------------------
 
-    if student_data.section_uuid is not None:
+    if "section_uuid" in fields_set:
+        if student_data.section_uuid is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="section_uuid cannot be null",
+            )
+
         section = db.execute(
             select(Section).where(
                 Section.uuid == student_data.section_uuid,
-                Section.class_id == student.class_id,
+                Section.class_id == target_class_id,
             )
         ).scalar_one_or_none()
 
         if section is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Section not found in this class",
+                detail="Section not found in the selected class",
             )
 
-        student.section_id = section.id
+        target_section_id = section.id
 
     # ------------------------------------------------------
+    # Apply academic placement
+    # ------------------------------------------------------
+
+    student.session_id = target_session_id
+    student.class_id = target_class_id
+    student.section_id = target_section_id
+
+    # ------------------------------------------------------
+    # Validate roll number in target placement
+    # ------------------------------------------------------
+
+    target_roll_no = (
+        student_data.roll_no
+        if "roll_no" in fields_set
+        else student.roll_no
+    )
+
+    if target_roll_no is not None:
+        existing_roll = db.execute(
+            select(Student).where(
+                Student.school_id == school.id,
+                Student.session_id == target_session_id,
+                Student.class_id == target_class_id,
+                Student.roll_no == target_roll_no,
+                Student.id != student.id,
+            )
+        ).scalar_one_or_none()
+
+        if existing_roll is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Roll number already exists for this class "
+                    "in this academic session"
+                ),
+            )
+
     # ------------------------------------------------------
     # Update admission number
     # ------------------------------------------------------
 
-    if student_data.admission_no is not None:
+    if "admission_no" in fields_set:
+        if student_data.admission_no is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="admission_no cannot be null",
+            )
+
         existing_student = db.execute(
             select(Student).where(
                 Student.school_id == school.id,
@@ -414,68 +614,54 @@ def update_student(
             )
 
         student.admission_no = student_data.admission_no
-    # ------------------------------------------------------
-    # Validate roll number
-    # ------------------------------------------------------
-
-    if student_data.roll_no is not None:
-        existing_roll = db.execute(
-            select(Student).where(
-                Student.school_id == school.id,
-                Student.session_id == student.session_id,
-                Student.class_id == student.class_id,
-                Student.roll_no == student_data.roll_no,
-                Student.id != student.id,
-            )
-        ).scalar_one_or_none()
-
-        if existing_roll is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Roll number already exists for this class in this academic session",
-            )
 
     # ------------------------------------------------------
     # Update remaining fields
     # ------------------------------------------------------
 
-    if student_data.roll_no is not None:
+    if "roll_no" in fields_set:
         student.roll_no = student_data.roll_no
 
-    if student_data.stream is not None:
+    if "stream" in fields_set:
         student.stream = student_data.stream
 
-    if student_data.full_name is not None:
+    if "full_name" in fields_set:
+        if student_data.full_name is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="full_name cannot be null",
+            )
+
         student.full_name = student_data.full_name
 
-    if student_data.father_name is not None:
+    if "father_name" in fields_set:
         student.father_name = student_data.father_name
 
-    if student_data.mother_name is not None:
+    if "mother_name" in fields_set:
         student.mother_name = student_data.mother_name
 
-    if student_data.dob is not None:
+    if "dob" in fields_set:
         student.dob = student_data.dob
 
-    if student_data.gender is not None:
+    if "gender" in fields_set:
         student.gender = student_data.gender
 
-    if student_data.blood_group is not None:
+    if "blood_group" in fields_set:
         student.blood_group = student_data.blood_group
 
-    if student_data.mobile is not None:
+    if "mobile" in fields_set:
         student.mobile = student_data.mobile
 
-    if student_data.aadhaar is not None:
+    if "aadhaar" in fields_set:
         student.aadhaar = student_data.aadhaar
 
-    if student_data.address is not None:
+    if "address" in fields_set:
         student.address = student_data.address
 
-    if student_data.photo_path is not None:
+    if "photo_path" in fields_set:
         student.photo_path = student_data.photo_path
 
-    if student_data.is_active is not None:
+    if "is_active" in fields_set:
         student.is_active = student_data.is_active
 
     # ------------------------------------------------------
@@ -486,6 +672,7 @@ def update_student(
     db.refresh(student)
 
     return student
+
 
 # ==========================================================
 # Delete Student
@@ -502,12 +689,17 @@ def delete_student(
     current_user: User = Depends(get_current_user),
 ):
     school = get_active_school(db, school_uuid)
+
     # ------------------------------------------------------
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(db, current_user, school.id, 'Only a school administrator can delete students')
-
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can delete students",
+    )
 
     # ------------------------------------------------------
     # Find student

@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -11,12 +12,23 @@ from app.api.academic_sessions import router as academic_sessions_router
 from app.api.classes import router as classes_router
 from app.api.sections import router as sections_router
 from app.api.students import router as students_router
+from pathlib import Path
 
 app = FastAPI(
     title="School ID Card API",
     version="1.0.0",
 )
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+UPLOAD_DIR = BASE_DIR / "uploads"
+
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount(
+    "/media",
+    StaticFiles(directory=UPLOAD_DIR),
+    name="media",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
