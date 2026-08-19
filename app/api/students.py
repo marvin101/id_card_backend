@@ -47,14 +47,9 @@ router = APIRouter(
 async def create_student(
     school_uuid: UUID,
     student_data_json: str = Form(...),
-    photo: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ------------------------------------------------------
-    # Parse student JSON from multipart form data
-    # ------------------------------------------------------
-
     try:
         student_data = StudentCreate.model_validate_json(student_data_json)
     except Exception as exc:
@@ -161,10 +156,7 @@ async def create_student(
         if existing_roll is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Roll number already exists for this class "
-                    "in this academic session"
-                ),
+                detail="Roll number already exists for this class in this academic session",
             )
 
     # ------------------------------------------------------
@@ -192,36 +184,91 @@ async def create_student(
     )
 
     db.add(student)
+    db.commit()
+    db.refresh(student)
 
-    # Flush first so the generated student UUID is available.
-    db.flush()
+    return student
 
-    # ------------------------------------------------------
-    # Save optional student photo
-    # ------------------------------------------------------
+# ==========================================================
+# Upload / Replace Student Photo
+# ==========================================================
 
-    if photo is not None:
-        content = await photo.read()
-
-        try:
-            saved_photo_path = save_student_photo(
-                student_uuid=student.uuid,
-                content=content,
-                content_type=photo.content_type,
-            )
-        except ValueError as exc:
-            db.rollback()
-
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-        student.photo_path = saved_photo_path
+@router.post(
+    "/{student_uuid}/photo",
+    response_model=StudentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def upload_student_photo(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
 
     # ------------------------------------------------------
-    # Save changes
+    # Check school administrator access
     # ------------------------------------------------------
+
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can upload student photos",
+    )
+
+    # ------------------------------------------------------
+    # Find student
+    # ------------------------------------------------------
+
+    student = db.execute(
+        select(Student).where(
+            Student.uuid == student_uuid,
+            Student.school_id == school.id,
+            Student.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found",
+        )
+
+    # ------------------------------------------------------
+    # Read uploaded photo
+    # ------------------------------------------------------
+
+    content = await photo.read()
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Uploaded photo is empty.",
+        )
+
+    # ------------------------------------------------------
+    # Save photo
+    # ------------------------------------------------------
+
+    try:
+        saved_photo_path = save_student_photo(
+            student_uuid=student.uuid,
+            content=content,
+            content_type=photo.content_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # ------------------------------------------------------
+    # Update student photo path
+    # ------------------------------------------------------
+
+    student.photo_path = saved_photo_path
 
     db.commit()
     db.refresh(student)
