@@ -2,4 +2,6 @@
 .venv/
 __pycache__/
 *.pyc
-.uploads/students/
+*.jpeg
+*.jpg
+*.png
