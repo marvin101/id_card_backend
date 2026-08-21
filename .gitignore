@@ -1,4 +1,17 @@
+# Uploaded student files
+uploads/
+
+# Local database / development files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment / secrets
 .env
+.env.*
+!.env.example
+
+# Python
 .venv/
 __pycache__/
 *.pyc
