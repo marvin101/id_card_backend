@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from pydantic import BaseModel
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -10,7 +12,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -47,14 +49,9 @@ router = APIRouter(
 async def create_student(
     school_uuid: UUID,
     student_data_json: str = Form(...),
-    photo: UploadFile | None = File(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # ------------------------------------------------------
-    # Parse student JSON from multipart form data
-    # ------------------------------------------------------
-
     try:
         student_data = StudentCreate.model_validate_json(student_data_json)
     except Exception as exc:
@@ -161,10 +158,7 @@ async def create_student(
         if existing_roll is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Roll number already exists for this class "
-                    "in this academic session"
-                ),
+                detail="Roll number already exists for this class in this academic session",
             )
 
     # ------------------------------------------------------
@@ -192,36 +186,91 @@ async def create_student(
     )
 
     db.add(student)
+    db.commit()
+    db.refresh(student)
 
-    # Flush first so the generated student UUID is available.
-    db.flush()
+    return student
 
-    # ------------------------------------------------------
-    # Save optional student photo
-    # ------------------------------------------------------
+# ==========================================================
+# Upload / Replace Student Photo
+# ==========================================================
 
-    if photo is not None:
-        content = await photo.read()
-
-        try:
-            saved_photo_path = save_student_photo(
-                student_uuid=student.uuid,
-                content=content,
-                content_type=photo.content_type,
-            )
-        except ValueError as exc:
-            db.rollback()
-
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-        student.photo_path = saved_photo_path
+@router.post(
+    "/{student_uuid}/photo",
+    response_model=StudentResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def upload_student_photo(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
 
     # ------------------------------------------------------
-    # Save changes
+    # Check school administrator access
     # ------------------------------------------------------
+
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can upload student photos",
+    )
+
+    # ------------------------------------------------------
+    # Find student
+    # ------------------------------------------------------
+
+    student = db.execute(
+        select(Student).where(
+            Student.uuid == student_uuid,
+            Student.school_id == school.id,
+            Student.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+
+    if student is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student not found",
+        )
+
+    # ------------------------------------------------------
+    # Read uploaded photo
+    # ------------------------------------------------------
+
+    content = await photo.read()
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Uploaded photo is empty.",
+        )
+
+    # ------------------------------------------------------
+    # Save photo
+    # ------------------------------------------------------
+
+    try:
+        saved_photo_path = save_student_photo(
+            student_uuid=student.uuid,
+            content=content,
+            content_type=photo.content_type,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # ------------------------------------------------------
+    # Update student photo path
+    # ------------------------------------------------------
+
+    student.photo_path = saved_photo_path
 
     db.commit()
     db.refresh(student)
@@ -372,6 +421,193 @@ def list_students(
     result = db.execute(query)
 
     return result.scalars().all()
+
+
+
+# ==========================================================
+# Paginated Student List
+# ==========================================================
+
+class StudentPageResponse(BaseModel):
+    items: list[StudentResponse]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
+@router.get(
+    "/paged",
+    response_model=StudentPageResponse,
+)
+def list_students_paged(
+    school_uuid: UUID,
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=200,
+        description="Number of students to return",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of students to skip",
+    ),
+    search: str | None = Query(
+        default=None,
+        description="Search by student name, admission number or roll number",
+    ),
+    session_uuid: UUID | None = Query(
+        default=None,
+        description="Filter by academic session",
+    ),
+    class_uuid: UUID | None = Query(
+        default=None,
+        description="Filter by class",
+    ),
+    section_uuid: UUID | None = Query(
+        default=None,
+        description="Filter by section",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+
+    # ------------------------------------------------------
+    # Check school administrator access
+    # ------------------------------------------------------
+
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator can view students",
+    )
+
+    # ------------------------------------------------------
+    # Build the filtered query
+    # ------------------------------------------------------
+
+    conditions = [
+        Student.school_id == school.id,
+        Student.is_active.is_(True),
+    ]
+
+    # ------------------------------------------------------
+    # Search by student name, admission number or roll number
+    # ------------------------------------------------------
+
+    if search and search.strip():
+        search_value = f"%{search.strip()}%"
+        conditions.append(
+            or_(
+                Student.full_name.ilike(search_value),
+                Student.admission_no.ilike(search_value),
+                Student.roll_no.ilike(search_value),
+            )
+        )
+
+    # ------------------------------------------------------
+    # Filter by academic session
+    # ------------------------------------------------------
+
+    if session_uuid:
+        session = db.execute(
+            select(AcademicSession).where(
+                AcademicSession.uuid == session_uuid,
+                AcademicSession.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Academic session not found",
+            )
+
+        conditions.append(Student.session_id == session.id)
+
+    # ------------------------------------------------------
+    # Filter by class
+    # ------------------------------------------------------
+
+    if class_uuid:
+        school_class = db.execute(
+            select(SchoolClass).where(
+                SchoolClass.uuid == class_uuid,
+                SchoolClass.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if school_class is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Class not found",
+            )
+
+        conditions.append(Student.class_id == school_class.id)
+
+    # ------------------------------------------------------
+    # Filter by section
+    # ------------------------------------------------------
+
+    if section_uuid:
+        section = db.execute(
+            select(Section)
+            .join(
+                SchoolClass,
+                SchoolClass.id == Section.class_id,
+            )
+            .where(
+                Section.uuid == section_uuid,
+                SchoolClass.school_id == school.id,
+            )
+        ).scalar_one_or_none()
+
+        if section is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Section not found",
+            )
+
+        conditions.append(Student.section_id == section.id)
+
+    # ------------------------------------------------------
+    # Count total matching students
+    # ------------------------------------------------------
+
+    total = db.execute(
+        select(func.count(Student.id)).where(*conditions)
+    ).scalar_one()
+
+    # ------------------------------------------------------
+    # Fetch only the requested page
+    # ------------------------------------------------------
+
+    query = (
+        select(Student)
+        .where(*conditions)
+        .order_by(Student.full_name, Student.id)
+        .offset(offset)
+        .limit(limit)
+    )
+
+    items = db.execute(query).scalars().all()
+
+    # ------------------------------------------------------
+    # Determine whether another page exists
+    # ------------------------------------------------------
+
+    has_more = offset + len(items) < total
+
+    return StudentPageResponse(
+        items=items,
+        total=total,
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+    )
 
 
 # ==========================================================

@@ -105,3 +105,10 @@ class StudentResponse(BaseModel):
     photo_path: str | None
 
     is_active: bool
+
+class StudentPageResponse(BaseModel):
+    items: list[StudentResponse]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool

@@ -15,3 +15,8 @@ uploads/
 .venv/
 __pycache__/
 *.pyc
+*.jpeg
+*.jpg
+*.png
+
+.tmp.driveupload/
