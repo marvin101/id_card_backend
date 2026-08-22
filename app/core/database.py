@@ -1,16 +1,20 @@
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
 
 
-DATABASE_URL = (
-    f"postgresql+psycopg://"
-    f"{settings.db_user}:{settings.db_password}"
-    f"@{settings.db_host}:{settings.db_port}"
-    f"/{settings.db_name}"
+DATABASE_URL = URL.create(
+    drivername="postgresql+psycopg",
+    username=settings.db_user,
+    password=settings.db_password,
+    host=settings.db_host,
+    port=settings.db_port,
+    database=settings.db_name,
+    query={"sslmode": "require"},
 )
 
 

@@ -1,11 +1,12 @@
-from pathlib import Path
 from uuid import UUID
 
 from PIL import Image
+from supabase import create_client
+
+from app.core.config import settings
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-STUDENT_UPLOAD_DIR = BASE_DIR / "uploads" / "students"
+SUPABASE_BUCKET = "student-photos"
 
 MAX_STUDENT_PHOTO_SIZE = 5 * 1024 * 1024  # 5 MB
 
@@ -16,10 +17,17 @@ ALLOWED_IMAGE_TYPES = {
 }
 
 
+supabase = create_client(
+    settings.supabase_url,
+    settings.supabase_secret_key,
+)
+
+
 def validate_student_photo(
     content: bytes,
     content_type: str | None,
 ) -> str:
+
     if len(content) > MAX_STUDENT_PHOTO_SIZE:
         raise ValueError("Student photo must not exceed 5 MB.")
 
@@ -29,10 +37,15 @@ def validate_student_photo(
         )
 
     try:
-        with Image.open(__import__("io").BytesIO(content)) as image:
+        import io
+
+        with Image.open(io.BytesIO(content)) as image:
             image.verify()
+
     except Exception as exc:
-        raise ValueError("The uploaded file is not a valid image.") from exc
+        raise ValueError(
+            "The uploaded file is not a valid image."
+        ) from exc
 
     return ALLOWED_IMAGE_TYPES[content_type]
 
@@ -42,35 +55,74 @@ def save_student_photo(
     content: bytes,
     content_type: str | None,
 ) -> str:
-    extension = validate_student_photo(content, content_type)
 
-    student_dir = STUDENT_UPLOAD_DIR / str(student_uuid)
-    student_dir.mkdir(parents=True, exist_ok=True)
-
-    # Remove any previous student photo.
-    for existing_file in student_dir.iterdir():
-        if existing_file.is_file():
-            existing_file.unlink()
+    extension = validate_student_photo(
+        content,
+        content_type,
+    )
 
     filename = f"photo{extension}"
-    file_path = student_dir / filename
 
-    file_path.write_bytes(content)
-
-    return f"/media/students/{student_uuid}/{filename}"
-
-
-def delete_student_photo(student_uuid: UUID) -> None:
-    student_dir = STUDENT_UPLOAD_DIR / str(student_uuid)
-
-    if not student_dir.exists():
-        return
-
-    for existing_file in student_dir.iterdir():
-        if existing_file.is_file():
-            existing_file.unlink()
+    storage_path = (
+        f"students/{student_uuid}/{filename}"
+    )
 
     try:
-        student_dir.rmdir()
-    except OSError:
-        pass
+        supabase.storage \
+            .from_(SUPABASE_BUCKET) \
+            .upload(
+                path=storage_path,
+                file=content,
+                file_options={
+                    "content-type": content_type,
+                    "upsert": "true",
+                },
+            )
+
+    except Exception as exc:
+        raise ValueError(
+            f"Failed to upload student photo: {exc}"
+        ) from exc
+
+    public_url = (
+        supabase.storage
+        .from_(SUPABASE_BUCKET)
+        .get_public_url(storage_path)
+    )
+
+    return public_url
+
+
+def delete_student_photo(
+    student_uuid: UUID,
+) -> None:
+    base_path = f"students/{student_uuid}"
+
+    try:
+        files = supabase.storage \
+            .from_(SUPABASE_BUCKET) \
+            .list(base_path)
+
+        if not files:
+            return
+
+        paths = [
+            f"{base_path}/{item['name']}"
+            for item in files
+            if item.get("name")
+        ]
+
+        if paths:
+            supabase.storage \
+                .from_(SUPABASE_BUCKET) \
+                .remove(paths)
+
+    except Exception as exc:
+        raise ValueError(
+            f"Failed to delete student photo: {exc}"
+        ) from exc
+
+    # We don't know the extension until we inspect the
+    # student's stored path, so deletion is handled by
+    # the specific stored object path when needed.
+    return

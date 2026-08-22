@@ -52,7 +52,16 @@ app.include_router(students_router)
 @app.get("/health")
 def health_check(db: Session = Depends(get_db)):
     try:
-        db.execute(text("SELECT 1"))
+        result = db.execute(
+            text(
+                """
+                SELECT
+                    current_database(),
+                    current_user,
+                    inet_server_addr()
+                """
+            )
+        ).mappings().one()
 
         return {
             "status": "ok",
