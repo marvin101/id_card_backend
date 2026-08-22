@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.users import router as users_router
 from app.core.database import get_db
+from app.core.config import settings
 from app.api.auth import router as auth_router
 from app.api.schools import router as schools_router
 from app.api.academic_sessions import router as academic_sessions_router
@@ -13,6 +14,7 @@ from app.api.classes import router as classes_router
 from app.api.sections import router as sections_router
 from app.api.students import router as students_router
 from pathlib import Path
+
 
 app = FastAPI(
     title="School ID Card API",
@@ -31,10 +33,7 @@ app.mount(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:49567",
-        "http://127.0.0.1:49567",
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
