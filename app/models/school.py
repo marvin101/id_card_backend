@@ -11,6 +11,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.academic_session import AcademicSession
+    from app.models.card_template import CardTemplate
     from app.models.school_class import SchoolClass
     from app.models.student import Student
     from app.models.user_school_access import UserSchoolAccess
@@ -172,4 +173,10 @@ class School(Base):
     students: Mapped[list["Student"]] = relationship(
         back_populates="school",
         cascade="all, delete-orphan",
+    )
+
+    card_template: Mapped["CardTemplate | None"] = relationship(
+        back_populates="school",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
