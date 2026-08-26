@@ -1,3 +1,4 @@
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -469,6 +470,14 @@ def list_students_paged(
         default=None,
         description="Filter by section",
     ),
+    created_from: date | None = Query(
+        default=None,
+        description="Filter by student data-entry date, inclusive",
+    ),
+    created_to: date | None = Query(
+        default=None,
+        description="Filter by student data-entry date, inclusive",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -493,6 +502,29 @@ def list_students_paged(
         Student.school_id == school.id,
         Student.is_active.is_(True),
     ]
+
+    if created_from and created_to and created_from > created_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="created_from cannot be after created_to",
+        )
+
+    if created_from:
+        conditions.append(
+            Student.created_at
+            >= datetime.combine(created_from, time.min, tzinfo=timezone.utc)
+        )
+
+    if created_to:
+        # Use an exclusive next-day boundary so all times on created_to match.
+        conditions.append(
+            Student.created_at
+            < datetime.combine(
+                created_to + timedelta(days=1),
+                time.min,
+                tzinfo=timezone.utc,
+            )
+        )
 
     # ------------------------------------------------------
     # Search by student name, admission number or roll number

@@ -53,6 +53,15 @@ app.include_router(card_templates_router)
 # ==========================================================
 
 @app.get("/health")
+def root():
+    return {
+        "status": "ok",
+        "service": "ID Card Manager API",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+@app.get("/health/check")
 def health_check(db: Session = Depends(get_db)):
     try:
         result = db.execute(
