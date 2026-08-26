@@ -8,6 +8,7 @@ from app.core.security import get_current_user, hash_password
 from app.core.school_access import (
     LEGACY_SCHOOL_ADMIN_ROLE,
     SCHOOL_ADMIN_ROLE,
+    is_platform_admin,
     require_school_admin,
     require_school_role_management,
 )
