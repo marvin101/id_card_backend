@@ -141,6 +141,36 @@ def require_school_admin(
     )
 
 
+def require_card_data_access(
+    db: Session,
+    current_user: User,
+    school_id: int,
+    detail: str = "Only a school administrator or card operator can access student card data",
+) -> UserSchoolAccess | None:
+    """Allow card-data work only within the user's assigned school.
+
+    Platform administrators bypass school membership. School administrators
+    (including legacy ``admin`` rows) and card operators may view, create,
+    update, and photograph student card records. This permission deliberately
+    excludes deletion and all school-configuration operations.
+    """
+    if is_platform_admin(current_user):
+        return None
+
+    access = require_school_access(db, current_user, school_id)
+    if access.role not in {
+        SCHOOL_ADMIN_ROLE,
+        LEGACY_SCHOOL_ADMIN_ROLE,
+        CARD_OPERATOR_ROLE,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail,
+        )
+
+    return access
+
+
 def require_school_role_management(
     db: Session,
     current_user: User,

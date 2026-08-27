@@ -20,7 +20,7 @@ from app.core.database import get_db
 from app.core.file_storage import save_student_photo
 from app.core.school_access import (
     get_active_school,
-    require_school_access,
+    require_card_data_access,
     require_school_admin,
 )
 from app.core.security import get_current_user
@@ -67,11 +67,11 @@ async def create_student(
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(
+    require_card_data_access(
         db,
         current_user,
         school.id,
-        "Only a school administrator can create students",
+        "Only a school administrator or card operator can create students",
     )
 
     # ------------------------------------------------------
@@ -214,11 +214,11 @@ async def upload_student_photo(
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(
+    require_card_data_access(
         db,
         current_user,
         school.id,
-        "Only a school administrator can upload student photos",
+        "Only a school administrator or card operator can upload student photos",
     )
 
     # ------------------------------------------------------
@@ -314,11 +314,11 @@ def list_students(
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(
+    require_card_data_access(
         db,
         current_user,
         school.id,
-        "Only a school administrator can view students",
+        "Only a school administrator or card operator can view students",
     )
 
     # ------------------------------------------------------
@@ -487,11 +487,11 @@ def list_students_paged(
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(
+    require_card_data_access(
         db,
         current_user,
         school.id,
-        "Only a school administrator can view students",
+        "Only a school administrator or card operator can view students",
     )
 
     # ------------------------------------------------------
@@ -662,7 +662,7 @@ def get_student(
     # Check school access
     # ------------------------------------------------------
 
-    require_school_access(db, current_user, school.id)
+    require_card_data_access(db, current_user, school.id)
 
     # ------------------------------------------------------
     # Find student
@@ -706,11 +706,11 @@ def update_student(
     # Check school administrator access
     # ------------------------------------------------------
 
-    require_school_admin(
+    require_card_data_access(
         db,
         current_user,
         school.id,
-        "Only a school administrator can update students",
+        "Only a school administrator or card operator can update students",
     )
 
     # ------------------------------------------------------
