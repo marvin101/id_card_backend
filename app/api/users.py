@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from uuid import UUID
@@ -14,6 +14,7 @@ from app.core.school_access import (
 )
 from app.models.users import User
 from app.models.school import School
+from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_school_access import UserSchoolAccess
 from app.schemas.auth import  (
     SchoolAccessCreate, 
@@ -52,9 +53,30 @@ def register_user(
             detail="Username already exists.",
         )
 
-    # ------------------------------------------------------
-    # Create user
-    # ------------------------------------------------------
+    normalized_school_name = user_data.school_name.strip()
+    schools = db.execute(
+        select(School).where(
+            func.lower(School.school_name) == normalized_school_name.lower(),
+            School.is_active.is_(True),
+        )
+    ).scalars().all()
+
+    if not schools:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active school matches that name.",
+        )
+
+    if len(schools) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Multiple schools share that name. Contact the platform "
+                "administrator before registering."
+            ),
+        )
+
+    school = schools[0]
 
     user = User(
         username=user_data.username,
@@ -62,11 +84,19 @@ def register_user(
         full_name=user_data.full_name,
         email=user_data.email,
         mobile=user_data.mobile,
-        designation=user_data.designation,
+        designation=user_data.designation.strip(),
         platform_role=None,
     )
 
     db.add(user)
+    db.flush()
+    db.add(
+        SchoolAccessRequest(
+            user_id=user.id,
+            school_id=school.id,
+            status="pending",
+        )
+    )
     db.commit()
     db.refresh(user)
 
@@ -92,9 +122,8 @@ def get_my_profile(
     response_model=list[SchoolUserAssignmentResponse],
     summary="List users and assignment status for a school",
     description=(
-        "Lists every active user account for the selected school. Users with "
-        "a school-access record include their role and are marked `assigned`; "
-        "all other active users are marked `pending_assignment`. Platform "
+        "Lists active users assigned to the selected school plus users with "
+        "a pending access request for that school. Platform "
         "administrators may view any school, while school administrators may "
         "view only schools they administer."
     ),
@@ -130,18 +159,36 @@ def list_school_user_assignments(
         "Only a school administrator can view assignments in this school",
     )
 
-    result = db.execute(
+    assigned_rows = db.execute(
         select(User, UserSchoolAccess.role)
-        .outerjoin(
+        .join(
             UserSchoolAccess,
             (UserSchoolAccess.user_id == User.id)
             & (UserSchoolAccess.school_id == school.id),
         )
         .where(User.is_active.is_(True))
-        .order_by(User.full_name, User.username)
-    )
+    ).all()
 
-    return [
+    pending_rows = db.execute(
+        select(User)
+        .join(
+            SchoolAccessRequest,
+            (SchoolAccessRequest.user_id == User.id)
+            & (SchoolAccessRequest.school_id == school.id),
+        )
+        .outerjoin(
+            UserSchoolAccess,
+            (UserSchoolAccess.user_id == User.id)
+            & (UserSchoolAccess.school_id == school.id),
+        )
+        .where(
+            User.is_active.is_(True),
+            SchoolAccessRequest.status == "pending",
+            UserSchoolAccess.id.is_(None),
+        )
+    ).scalars().all()
+
+    assignments = [
         SchoolUserAssignmentResponse(
             user_uuid=user.uuid,
             username=user.username,
@@ -150,10 +197,29 @@ def list_school_user_assignments(
             mobile=user.mobile,
             designation=user.designation,
             role=role,
-            assignment_status="assigned" if role is not None else "pending_assignment",
+            assignment_status="assigned",
         )
-        for user, role in result.all()
+        for user, role in assigned_rows
     ]
+
+    assignments.extend(
+        SchoolUserAssignmentResponse(
+            user_uuid=user.uuid,
+            username=user.username,
+            full_name=user.full_name,
+            email=user.email,
+            mobile=user.mobile,
+            designation=user.designation,
+            role=None,
+            assignment_status="pending_assignment",
+        )
+        for user in pending_rows
+    )
+
+    return sorted(
+        assignments,
+        key=lambda item: (item.full_name.casefold(), item.username.casefold()),
+    )
 
 # ==========================================================
 # Grant User Access to School
@@ -212,6 +278,20 @@ def grant_school_access(
             detail="User not found",
         )
 
+    access_request = db.execute(
+        select(SchoolAccessRequest).where(
+            SchoolAccessRequest.user_id == user.id,
+            SchoolAccessRequest.school_id == school.id,
+            SchoolAccessRequest.status == "pending",
+        )
+    ).scalar_one_or_none()
+
+    if not is_platform_admin(current_user) and access_request is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The user has not requested access to this school",
+        )
+
     # ------------------------------------------------------
     # Check existing access
     # ------------------------------------------------------
@@ -240,6 +320,8 @@ def grant_school_access(
     )
 
     db.add(access)
+    if access_request is not None:
+        access_request.status = "approved"
     db.commit()
     db.refresh(access)
 

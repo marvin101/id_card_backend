@@ -12,6 +12,7 @@ from app.core.database import Base
 from app.models import (
     AcademicSession,
     School,
+    SchoolAccessRequest,
     SchoolClass,
     Section,
     Student,

@@ -1,5 +1,5 @@
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Literal
 
 SchoolRole = Literal["school_admin", "card_operator", "teacher", "staff"]
@@ -55,9 +55,10 @@ class SchoolAccessUpdate(BaseModel):
     role: SchoolRole
 
 class UserCreate(BaseModel):
-    username: str
-    password: str
-    full_name: str
+    username: str = Field(min_length=3, max_length=100)
+    password: str = Field(min_length=8, max_length=200)
+    full_name: str = Field(min_length=1, max_length=150)
     email: str | None = None
     mobile: str | None = None
-    designation: str | None = None
+    designation: str = Field(min_length=1, max_length=100)
+    school_name: str = Field(min_length=1, max_length=200)
