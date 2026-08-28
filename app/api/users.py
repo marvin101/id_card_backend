@@ -21,6 +21,7 @@ from app.schemas.auth import  (
     SchoolAccessResponse, 
     SchoolAccessUpdate, 
     SchoolUserAssignmentResponse,
+    RegistrationSchoolResponse,
     UserCreate, 
     UserResponse
     )
@@ -28,6 +29,66 @@ router = APIRouter(
     prefix="/users",
     tags=["Users"],
 )
+
+
+def _resolve_registration_school(db: Session, user_data: UserCreate) -> School:
+    """Resolve a registration request to exactly one active school."""
+    if user_data.school_uuid is not None:
+        school = db.execute(
+            select(School).where(
+                School.uuid == user_data.school_uuid,
+                School.is_active.is_(True),
+            )
+        ).scalar_one_or_none()
+        if school is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The selected school is no longer available.",
+            )
+        return school
+
+    # Retain exact-name lookup temporarily so an already-deployed frontend can
+    # continue registering while the backend-first rollout is in progress.
+    assert user_data.school_name is not None
+    normalized_school_name = user_data.school_name.strip()
+    schools = db.execute(
+        select(School).where(
+            func.lower(School.school_name) == normalized_school_name.lower(),
+            School.is_active.is_(True),
+        )
+    ).scalars().all()
+
+    if not schools:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active school matches that name.",
+        )
+
+    if len(schools) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Multiple schools share that name. Contact the platform "
+                "administrator before registering."
+            ),
+        )
+
+    return schools[0]
+
+
+@router.get(
+    "/registration-schools",
+    response_model=list[RegistrationSchoolResponse],
+    summary="List active schools available during registration",
+)
+def list_registration_schools(
+    db: Session = Depends(get_db),
+):
+    return db.execute(
+        select(School)
+        .where(School.is_active.is_(True))
+        .order_by(School.school_name, School.uuid)
+    ).scalars().all()
 
 
 @router.post(
@@ -53,30 +114,7 @@ def register_user(
             detail="Username already exists.",
         )
 
-    normalized_school_name = user_data.school_name.strip()
-    schools = db.execute(
-        select(School).where(
-            func.lower(School.school_name) == normalized_school_name.lower(),
-            School.is_active.is_(True),
-        )
-    ).scalars().all()
-
-    if not schools:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active school matches that name.",
-        )
-
-    if len(schools) > 1:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Multiple schools share that name. Contact the platform "
-                "administrator before registering."
-            ),
-        )
-
-    school = schools[0]
+    school = _resolve_registration_school(db, user_data)
 
     user = User(
         username=user_data.username,

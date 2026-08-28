@@ -1,5 +1,5 @@
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 
 SchoolRole = Literal["school_admin", "card_operator", "teacher", "staff"]
@@ -54,6 +54,12 @@ class SchoolUserAssignmentResponse(BaseModel):
 class SchoolAccessUpdate(BaseModel):
     role: SchoolRole
 
+
+class RegistrationSchoolResponse(BaseModel):
+    uuid: UUID
+    school_name: str
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=8, max_length=200)
@@ -61,4 +67,13 @@ class UserCreate(BaseModel):
     email: str | None = None
     mobile: str | None = None
     designation: str = Field(min_length=1, max_length=100)
-    school_name: str = Field(min_length=1, max_length=200)
+    school_uuid: UUID | None = None
+    # Temporary compatibility for older deployed clients. New clients submit
+    # school_uuid from the registration-school selector.
+    school_name: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def require_school_selection(self):
+        if self.school_uuid is None and self.school_name is None:
+            raise ValueError("Select a school.")
+        return self
