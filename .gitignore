@@ -10,6 +10,7 @@ uploads/
 .env
 .env.*
 !.env.example
+./checkout/.env
 
 # Python
 .venv/
