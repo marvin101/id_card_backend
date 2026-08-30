@@ -43,8 +43,8 @@ def _user(*, platform_role=None, legacy_platform_admin=False):
     )
 
 
-def _access(role):
-    return SimpleNamespace(user_id=1, school_id=10, role=role)
+def _access(role, *, school_id=10):
+    return SimpleNamespace(user_id=1, school_id=school_id, role=role)
 
 
 class AuthorizationMatrixTests(unittest.TestCase):
@@ -144,7 +144,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
             )
         )
 
-    def test_teacher_and_staff_cannot_access_card_data(self):
+    def test_teacher_and_staff_have_membership_without_card_data_access(self):
         user = _user()
         for role in (TEACHER_ROLE, STAFF_ROLE):
             with self.subTest(role=role):
@@ -155,7 +155,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
                     lambda: require_card_data_access(db, user, 10)
                 )
 
-    def test_missing_or_revoked_membership_is_denied(self):
+    def test_missing_or_cross_school_membership_is_denied(self):
         user = _user()
         db = _Database()
 
