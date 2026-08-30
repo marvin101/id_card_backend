@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.models.users import User
 
+
+INVALID_CREDENTIALS_DETAIL = "Could not validate credentials"
+
 # ==========================================================
 # Password Hashing
 # ==========================================================
@@ -41,7 +44,7 @@ def create_access_token(
     """Create a JWT access token."""
 
     if expires_delta is None:
-        expires_delta = timedelta(minutes=30)
+        expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
 
     expire = datetime.now(timezone.utc) + expires_delta
 
@@ -79,14 +82,16 @@ def get_current_user(
     except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired authentication token",
+            detail=INVALID_CREDENTIALS_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     subject = payload.get("sub")
     if not subject:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
+            detail=INVALID_CREDENTIALS_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
@@ -94,7 +99,8 @@ def get_current_user(
     except (TypeError, ValueError, AttributeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
+            detail=INVALID_CREDENTIALS_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     result = db.execute(
@@ -108,7 +114,8 @@ def get_current_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail=INVALID_CREDENTIALS_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     if not user.is_active:

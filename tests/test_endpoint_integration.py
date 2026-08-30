@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -148,6 +148,25 @@ def test_login_and_authenticated_profile_use_the_http_authentication_path():
     assert profile_response.status_code == 200
     assert profile_response.json()["uuid"] == str(user.uuid)
     assert profile_response.json()["username"] == user.username
+
+
+def test_expired_access_token_is_rejected_by_authenticated_endpoint():
+    user = _user()
+    _override_db(_EndpointSession(user=user))
+    expired_token = create_access_token(
+        str(user.uuid),
+        expires_delta=timedelta(seconds=-1),
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/users/me",
+            headers={"Authorization": f"Bearer {expired_token}"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_invalid_login_is_generic_and_does_not_log_credentials(caplog):

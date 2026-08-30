@@ -114,6 +114,7 @@ Required configuration names:
 | `DB_PASSWORD` | Database password |
 | `SECRET_KEY` | Long random JWT signing secret |
 | `ALGORITHM` | JWT algorithm; current default is `HS256` |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Bearer access-token lifetime in minutes; defaults to `30` |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Private server-side Supabase key |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
