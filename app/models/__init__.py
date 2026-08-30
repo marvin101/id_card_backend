@@ -8,11 +8,13 @@ from app.models.section import Section
 from app.models.student import Student
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
+from app.models.bulk_photo_import import BulkPhotoImport
 
 __all__ = [
     "AcademicSession",
     "CardTemplate",
     "CustomFieldDefinition",
+    "BulkPhotoImport",
     "School",
     "SchoolAccessRequest",
     "SchoolClass",

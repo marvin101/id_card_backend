@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -32,6 +33,12 @@ class CustomFieldDefinition(Base):
             "entity_type",
             "field_key",
             name="uq_custom_field_school_entity_key",
+        ),
+        Index(
+            "ix_custom_field_school_entity_order",
+            "school_id",
+            "entity_type",
+            "display_order",
         ),
         CheckConstraint(
             "entity_type IN ('student')",
