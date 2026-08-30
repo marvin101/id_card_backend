@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from uuid import UUID
 from app.core.database import get_db
+from app.core.rate_limit import enforce_registration_rate_limit
 from app.core.security import get_current_user, hash_password
 from app.core.school_access import (
     LEGACY_SCHOOL_ADMIN_ROLE,
@@ -98,6 +99,7 @@ def list_registration_schools(
 )
 def register_user(
     user_data: UserCreate,
+    _: None = Depends(enforce_registration_rate_limit),
     db: Session = Depends(get_db),
 ):
     # ------------------------------------------------------
