@@ -117,11 +117,6 @@ Required configuration names:
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Private server-side Supabase key |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
-| `AUTH_RATE_LIMIT_ENABLED` | Enables the process-local login and registration limiter; defaults to `true` |
-| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Sliding-window duration; defaults to `60` |
-| `LOGIN_RATE_LIMIT_REQUESTS` | Login attempts allowed per client address and window; defaults to `10` |
-| `REGISTRATION_RATE_LIMIT_REQUESTS` | Registration attempts allowed per client address and window; defaults to `5` |
-| `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Number of controlled reverse-proxy hops used to select the client address from the right of `X-Forwarded-For`; defaults to `0` |
 
 `SUPABASE_URL` and `SUPABASE_SECRET_KEY` are required by `app/core/config.py`; add their names to a local `.env` even if an older `.env.example` does not yet list them.
 
@@ -153,10 +148,6 @@ Useful endpoints:
 - Database health: `http://127.0.0.1:8000/health/check`
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
-
-`/health` is a liveness endpoint and does not query PostgreSQL.
-`/health/check` is a readiness endpoint and returns HTTP `503` with a generic
-disconnected response when PostgreSQL cannot be reached.
 
 ## API groups
 
@@ -197,14 +188,6 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 ```
 
 Current production API: `https://id-card-backend-vcz5.onrender.com`
-
-For the normal Render proxy topology, set
-`AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS=1`. Confirm the actual proxy chain before
-raising this value. The limiter is intentionally in memory and enforced per
-application process. If the service is scaled to multiple workers or instances,
-enforce the equivalent policy at Render's edge or replace it with a shared
-limiter; it can be disabled with `AUTH_RATE_LIMIT_ENABLED=false` to avoid
-double-throttling.
 
 Before deployment:
 

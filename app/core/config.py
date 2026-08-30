@@ -1,6 +1,5 @@
 from typing import List
 
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,17 +24,6 @@ class Settings(BaseSettings):
         "http://localhost:49567,"
         "http://127.0.0.1:49567"
     )
-
-    # Public authentication throttling. Limits are intentionally per process;
-    # set enabled=false when throttling is provided by the edge instead.
-    auth_rate_limit_enabled: bool = True
-    auth_rate_limit_window_seconds: int = Field(default=60, ge=1)
-    login_rate_limit_requests: int = Field(default=10, ge=1)
-    registration_rate_limit_requests: int = Field(default=5, ge=1)
-
-    # Only trust forwarded client addresses when this many known proxies sit
-    # directly in front of the application. Keep at 0 for direct exposure.
-    auth_rate_limit_trusted_proxy_hops: int = Field(default=0, ge=0)
 
     model_config = SettingsConfigDict(
         env_file=".env",

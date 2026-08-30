@@ -31,43 +31,33 @@ APPLICATION_TABLES = (
 
 def upgrade() -> None:
     """Enable deny-by-default RLS without changing backend authorization."""
+    connection = op.get_bind()
+
     # CampusID uses one direct PostgreSQL role for both Alembic and the
     # SQLAlchemy application. RLS is safe only when that role owns each table,
     # is a superuser, or has BYPASSRLS. Fail before changing anything if the
-    # deployment credentials do not satisfy that invariant. Keeping the check
-    # in PostgreSQL makes both online upgrades and ``alembic upgrade --sql``
-    # preserve the same safety behavior.
-    table_names = ", ".join(f"'{table_name}'" for table_name in APPLICATION_TABLES)
-    op.execute(
-        f"""
-        DO $$
-        DECLARE
-            target_table text;
-            can_backend_bypass_rls boolean;
-        BEGIN
-            FOREACH target_table IN ARRAY ARRAY[{table_names}]
-            LOOP
-                SELECT r.rolsuper
-                    OR r.rolbypassrls
-                    OR pg_has_role(current_user, c.relowner, 'MEMBER')
-                INTO can_backend_bypass_rls
-                FROM pg_catalog.pg_class AS c
-                JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-                JOIN pg_catalog.pg_roles AS r ON r.rolname = current_user
-                WHERE n.nspname = 'public'
-                  AND c.relname = target_table
-                  AND c.relkind IN ('r', 'p');
+    # deployment credentials do not satisfy that invariant.
+    for table_name in APPLICATION_TABLES:
+        can_backend_bypass_rls = connection.exec_driver_sql(
+            """
+            SELECT r.rolsuper
+                OR r.rolbypassrls
+                OR pg_has_role(current_user, c.relowner, 'MEMBER')
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            JOIN pg_catalog.pg_roles AS r ON r.rolname = current_user
+            WHERE n.nspname = 'public'
+              AND c.relname = %s
+              AND c.relkind IN ('r', 'p')
+            """,
+            (table_name,),
+        ).scalar_one_or_none()
 
-                IF can_backend_bypass_rls IS DISTINCT FROM TRUE THEN
-                    RAISE EXCEPTION
-                        'Refusing to enable RLS: the configured backend database role cannot bypass RLS for public.%',
-                        target_table;
-                END IF;
-            END LOOP;
-        END
-        $$
-        """
-    )
+        if can_backend_bypass_rls is not True:
+            raise RuntimeError(
+                "Refusing to enable RLS: the configured backend database "
+                f"role cannot bypass RLS for public.{table_name}"
+            )
 
     for table_name in APPLICATION_TABLES:
         op.execute(f'ALTER TABLE public."{table_name}" ENABLE ROW LEVEL SECURITY')
