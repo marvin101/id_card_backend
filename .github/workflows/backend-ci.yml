@@ -38,4 +38,4 @@ jobs:
       - name: Validate Alembic revision graph
         run: |
           python -m alembic heads
-          python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; heads = ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert heads == ['9b6f3e21a4d7'], f'Expected one head 9b6f3e21a4d7, found {heads}'"
+          python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; heads = ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert len(heads) == 1, f'Expected exactly one Alembic head, found {len(heads)}: {heads}'"

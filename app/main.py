@@ -18,6 +18,7 @@ from app.api.sections import router as sections_router
 from app.api.students import router as students_router
 from app.api.card_templates import router as card_templates_router
 from app.api.student_fields import router as student_fields_router
+from app.api.student_imports import router as student_imports_router
 logger = logging.getLogger(__name__)
 
 
@@ -53,6 +54,7 @@ app.include_router(sections_router)
 app.include_router(students_router)
 app.include_router(card_templates_router)
 app.include_router(student_fields_router)
+app.include_router(student_imports_router)
 # ==========================================================
 # Health Check
 # ==========================================================

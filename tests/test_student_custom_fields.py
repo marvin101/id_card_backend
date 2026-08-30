@@ -14,6 +14,7 @@ from app.schemas.student import (
     StudentResponse,
 )
 from app.api.student_fields import _require_manager
+from app.api.students import _student_response_options
 
 
 class _Scalars:
@@ -237,3 +238,16 @@ def test_legacy_student_response_without_custom_fields_remains_valid():
         }
     )
     assert response.custom_fields == []
+
+
+def test_student_response_loader_covers_every_serialized_relationship():
+    paths = {str(option.path) for option in _student_response_options()}
+
+    assert any("Student.academic_session" in path for path in paths)
+    assert any("Student.school_class" in path for path in paths)
+    assert any("Student.section" in path for path in paths)
+    assert any(
+        "Student.custom_field_values" in path
+        and "StudentCustomFieldValue.field_definition" in path
+        for path in paths
+    )

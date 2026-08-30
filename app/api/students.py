@@ -14,7 +14,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.file_storage import save_student_photo
@@ -32,6 +32,7 @@ from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
 from app.models.student import Student
+from app.models.custom_field import StudentCustomFieldValue
 from app.models.users import User
 from app.schemas.student import StudentCreate, StudentResponse, StudentUpdate
 
@@ -40,6 +41,18 @@ router = APIRouter(
     prefix="/schools/{school_uuid}/students",
     tags=["Students"],
 )
+
+
+def _student_response_options():
+    """Load every relationship traversed by StudentResponse serialization."""
+    return (
+        selectinload(Student.academic_session),
+        selectinload(Student.school_class),
+        selectinload(Student.section),
+        selectinload(Student.custom_field_values).selectinload(
+            StudentCustomFieldValue.field_definition
+        ),
+    )
 
 
 # ==========================================================
@@ -339,6 +352,7 @@ def list_students(
 
     query = (
         select(Student)
+        .options(*_student_response_options())
         .where(
             Student.school_id == school.id,
             Student.is_active.is_(True),
@@ -631,6 +645,7 @@ def list_students_paged(
 
     query = (
         select(Student)
+        .options(*_student_response_options())
         .where(*conditions)
         .order_by(Student.full_name, Student.id)
         .offset(offset)
@@ -681,7 +696,7 @@ def get_student(
     # ------------------------------------------------------
 
     student = db.execute(
-        select(Student).where(
+        select(Student).options(*_student_response_options()).where(
             Student.uuid == student_uuid,
             Student.school_id == school.id,
             Student.is_active.is_(True),
