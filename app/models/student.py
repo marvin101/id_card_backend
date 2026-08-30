@@ -23,6 +23,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.academic_session import AcademicSession
     from app.models.school import School
+    from app.models.custom_field import StudentCustomFieldValue
     from app.models.school_class import SchoolClass
     from app.models.section import Section
 
@@ -305,6 +306,26 @@ class Student(Base):
     school: Mapped["School"] = relationship(
         back_populates="students",
     )
+
+    custom_field_values: Mapped[list["StudentCustomFieldValue"]] = relationship(
+        back_populates="student",
+        cascade="all, delete-orphan",
+        order_by="StudentCustomFieldValue.id",
+    )
+
+    @property
+    def custom_fields(self) -> list[dict]:
+        return [
+            {
+                "field_uuid": item.field_definition.uuid,
+                "field_key": item.field_definition.field_key,
+                "label": item.field_definition.label,
+                "data_type": item.field_definition.data_type,
+                "value": item.value,
+                "is_active": item.field_definition.is_active,
+            }
+            for item in self.custom_field_values
+        ]
 
     academic_session: Mapped["AcademicSession"] = relationship(
         back_populates="students",

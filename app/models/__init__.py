@@ -1,5 +1,6 @@
 from app.models.academic_session import AcademicSession
 from app.models.card_template import CardTemplate
+from app.models.custom_field import CustomFieldDefinition, StudentCustomFieldValue
 from app.models.school import School
 from app.models.school_access_request import SchoolAccessRequest
 from app.models.school_class import SchoolClass
@@ -11,11 +12,13 @@ from app.models.users import User
 __all__ = [
     "AcademicSession",
     "CardTemplate",
+    "CustomFieldDefinition",
     "School",
     "SchoolAccessRequest",
     "SchoolClass",
     "Section",
     "Student",
+    "StudentCustomFieldValue",
     "User",
     "UserSchoolAccess",
 ]

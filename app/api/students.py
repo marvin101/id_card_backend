@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.file_storage import save_student_photo
+from app.core.custom_fields import (
+    replace_student_custom_fields,
+    validate_student_custom_fields,
+)
 from app.core.school_access import (
     get_active_school,
     require_card_data_access,
@@ -72,6 +76,13 @@ async def create_student(
         current_user,
         school.id,
         "Only a school administrator or card operator can create students",
+    )
+
+    validated_custom_fields = validate_student_custom_fields(
+        db,
+        school.id,
+        student_data.custom_fields,
+        require_all=True,
     )
 
     # ------------------------------------------------------
@@ -187,6 +198,7 @@ async def create_student(
     )
 
     db.add(student)
+    replace_student_custom_fields(db, student, validated_custom_fields)
     db.commit()
     db.refresh(student)
 
@@ -732,6 +744,20 @@ def update_student(
 
     fields_set = student_data.model_fields_set
 
+    validated_custom_fields = None
+    if "custom_fields" in fields_set:
+        if student_data.custom_fields is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="custom_fields cannot be null",
+            )
+        validated_custom_fields = validate_student_custom_fields(
+            db,
+            school.id,
+            student_data.custom_fields,
+            require_all=True,
+        )
+
     # ------------------------------------------------------
     # Determine target academic placement
     # ------------------------------------------------------
@@ -931,6 +957,9 @@ def update_student(
 
     if "is_active" in fields_set:
         student.is_active = student_data.is_active
+
+    if validated_custom_fields is not None:
+        replace_student_custom_fields(db, student, validated_custom_fields)
 
     # ------------------------------------------------------
     # Save changes

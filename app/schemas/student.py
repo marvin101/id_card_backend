@@ -2,7 +2,21 @@ from datetime import date
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class StudentCustomFieldInput(BaseModel):
+    field_uuid: UUID
+    value: str
+
+
+class StudentCustomFieldResponse(BaseModel):
+    field_uuid: UUID
+    field_key: str
+    label: str
+    data_type: str
+    value: str
+    is_active: bool
 
 class BloodGroup(str, Enum):
         A_POSITIVE = "A+"
@@ -53,6 +67,7 @@ class StudentCreate(BaseModel):
     # ------------------------------------------------------
 
     photo_path: str | None = None
+    custom_fields: list[StudentCustomFieldInput] = Field(default_factory=list)
 
 class StudentUpdate(BaseModel):
     admission_no: str | None = None
@@ -76,6 +91,7 @@ class StudentUpdate(BaseModel):
     photo_path: str | None = None
 
     is_active: bool | None = None
+    custom_fields: list[StudentCustomFieldInput] | None = None
 
 
 class StudentResponse(BaseModel):
@@ -105,6 +121,7 @@ class StudentResponse(BaseModel):
     photo_path: str | None
 
     is_active: bool
+    custom_fields: list[StudentCustomFieldResponse] = Field(default_factory=list)
 
 class StudentPageResponse(BaseModel):
     items: list[StudentResponse]
