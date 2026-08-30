@@ -1,7 +1,4 @@
-import logging
-from pathlib import Path
-
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -17,7 +14,7 @@ from app.api.classes import router as classes_router
 from app.api.sections import router as sections_router
 from app.api.students import router as students_router
 from app.api.card_templates import router as card_templates_router
-logger = logging.getLogger(__name__)
+from pathlib import Path
 
 
 app = FastAPI(
@@ -64,14 +61,8 @@ def root():
         "health": "/health",
     }
 
-@app.get(
-    "/health/check",
-    responses={503: {"description": "Database is unavailable."}},
-)
-def health_check(
-    response: Response,
-    db: Session = Depends(get_db),
-):
+@app.get("/health/check")
+def health_check(db: Session = Depends(get_db)):
     try:
         result = db.execute(
             text(
@@ -91,8 +82,6 @@ def health_check(
         }
 
     except Exception:
-        logger.error("Database readiness check failed")
-        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
             "status": "error",
             "api": "running",
