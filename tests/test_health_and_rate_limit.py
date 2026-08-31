@@ -51,6 +51,19 @@ def test_liveness_health_remains_available_without_a_database():
     assert response.json()["status"] == "ok"
 
 
+def test_cors_exposes_download_filename_header_to_browser_clients():
+    origin = settings.cors_origin_list[0]
+
+    with TestClient(app) as client:
+        response = client.get("/health", headers={"Origin": origin})
+
+    exposed = {
+        header.strip().casefold()
+        for header in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert "content-disposition" in exposed
+
+
 def test_database_health_is_200_when_connected():
     _override_db(_HealthyDatabase())
 
