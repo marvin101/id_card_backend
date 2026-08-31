@@ -1,17 +1,23 @@
 import io
 import zipfile
+from types import SimpleNamespace
 from uuid import uuid4
+from xml.etree import ElementTree
 
 import pytest
 from fastapi import HTTPException, UploadFile
+from fastapi.testclient import TestClient
 
 from app.api.student_imports import (
     _ValidatedImportRow,
+    _resolve_target_fields,
     _suggest_mappings,
     _target_fields,
     _validate_import,
     commit_student_import,
+    download_student_import_template,
 )
+from app.core.student_import_template import XLSX_CONTENT_TYPE, build_student_import_template
 from app.core.student_imports import parse_student_upload
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
@@ -132,12 +138,99 @@ def test_header_suggestions_are_deterministic_and_one_to_one():
 def test_import_routes_expose_upload_preview_and_commit():
     paths = app.openapi()["paths"]
     assert set(paths["/schools/{school_uuid}/students/imports/upload"]) == {"post"}
+    assert set(paths["/schools/{school_uuid}/students/imports/template"]) == {"get"}
     assert set(
         paths["/schools/{school_uuid}/students/imports/{upload_id}/preview"]
     ) == {"post"}
     assert set(
         paths["/schools/{school_uuid}/students/imports/{upload_id}/commit"]
     ) == {"post"}
+
+
+def _definition(*, label, order, active=True, required=False):
+    return SimpleNamespace(
+        id=order + 1,
+        uuid=uuid4(),
+        label=label,
+        data_type="text",
+        is_required=required,
+        display_order=order,
+        is_active=active,
+    )
+
+
+def _worksheet_rows(content: bytes):
+    namespace = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        root = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+    return root, root.findall(f"{namespace}sheetData/{namespace}row")
+
+
+def test_template_requires_authentication():
+    with TestClient(app) as client:
+        response = client.get(f"/schools/{uuid4()}/students/imports/template")
+
+    assert response.status_code == 401
+
+
+def test_template_uses_same_school_access_enforcement_as_import(monkeypatch):
+    school = SimpleNamespace(id=10, school_name="Campus School")
+    monkeypatch.setattr("app.api.student_imports.get_active_school", lambda *args: school)
+    monkeypatch.setattr(
+        "app.api.student_imports.require_card_data_access",
+        lambda *args: (_ for _ in ()).throw(
+            HTTPException(status_code=403, detail="Only permitted users can import students")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        download_student_import_template(uuid4(), db=object(), current_user=object())
+
+    assert error.value.status_code == 403
+
+
+def test_school_template_contains_only_active_ordered_fields_and_no_data_rows():
+    later = _definition(label="Bus Route", order=8)
+    disabled = _definition(label="House", order=2, active=False)
+    earlier = _definition(label="Emergency Contact", order=1, required=True)
+    # The database query is authoritative for filtering and ordering; emulate its result.
+    db = _Database([earlier, later])
+
+    fields = _resolve_target_fields(db, 10)
+    content = build_student_import_template(fields)
+    root, rows = _worksheet_rows(content)
+    xml = ElementTree.tostring(root, encoding="unicode")
+
+    assert [field.label for field in fields[-2:]] == ["Emergency Contact", "Bus Route"]
+    assert "Emergency Contact" in xml
+    assert "Bus Route" in xml
+    assert disabled.label not in xml
+    assert len(rows) == 1
+    assert rows[0].attrib["r"] == "1"
+    assert 'ySplit="1"' in xml
+
+
+def test_template_headers_auto_map_to_authoritative_target_field_set():
+    definition = _definition(label="Transport Stop", order=0)
+    fields = _target_fields([definition])
+    suggestions = _suggest_mappings([field.label for field in fields], fields)
+
+    assert [item.target_field for item in suggestions] == [field.key for field in fields]
+
+
+def test_template_response_has_xlsx_headers_and_school_filename(monkeypatch):
+    school = SimpleNamespace(id=10, school_name="Campus International School")
+    fields = _target_fields([])
+    monkeypatch.setattr("app.api.student_imports._authorize", lambda *args: school)
+    monkeypatch.setattr("app.api.student_imports._resolve_target_fields", lambda *args: fields)
+
+    response = download_student_import_template(uuid4(), db=object(), current_user=object())
+
+    assert response.media_type == XLSX_CONTENT_TYPE
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="student_import_template_campus_international_school.xlsx"'
+    )
+    assert response.body.startswith(b"PK")
 
 
 def test_preview_detects_duplicate_upload_rows_without_student_writes():

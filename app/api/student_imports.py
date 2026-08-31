@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +14,11 @@ from app.core.database import get_db
 from app.core.school_access import get_active_school, require_card_data_access
 from app.core.security import get_current_user
 from app.core.student_imports import delete_import_manifest, load_import_manifest, parse_student_upload, save_import_manifest
+from app.core.student_import_template import (
+    XLSX_CONTENT_TYPE,
+    build_student_import_template,
+    student_import_template_filename,
+)
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.school_class import SchoolClass
@@ -104,6 +109,11 @@ def _active_custom_fields(db: Session, school_id: int) -> list[CustomFieldDefini
     ).scalars().all()
 
 
+def _resolve_target_fields(db: Session, school_id: int) -> list[StudentImportField]:
+    """Return the ordered, currently importable schema for one school."""
+    return _target_fields(_active_custom_fields(db, school_id))
+
+
 def _unique_lookup(items: list[Any], label: str) -> dict[str, Any]:
     grouped: dict[str, list[Any]] = {}
     for item in items:
@@ -132,8 +142,7 @@ def _validate_import(
     payload: StudentImportMapping,
 ) -> tuple[StudentImportPreviewResponse, list[_ValidatedImportRow]]:
     headers = set(manifest["headers"])
-    definitions = _active_custom_fields(db, school_id)
-    fields = _target_fields(definitions)
+    fields = _resolve_target_fields(db, school_id)
     valid_targets = {field.key for field in fields}
     mapping = {item.target_field: item.source_column for item in payload.mappings}
     unknown_sources = [source for source in mapping.values() if source not in headers]
@@ -268,10 +277,25 @@ def _authorize(db: Session, current_user: User, school_uuid: UUID):
 async def upload_student_import(school_uuid: UUID, file: UploadFile = File(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     school = _authorize(db, current_user, school_uuid)
     headers, rows = await parse_student_upload(file)
-    definitions = _active_custom_fields(db, school.id)
-    fields = _target_fields(definitions)
+    fields = _resolve_target_fields(db, school.id)
     upload_id = save_import_manifest(school_uuid=school_uuid, user_id=current_user.id, filename=file.filename or "students", headers=headers, rows=rows)
     return StudentImportUploadResponse(upload_id=upload_id, filename=file.filename or "students", headers=headers, row_count=len(rows), target_fields=fields, suggested_mappings=_suggest_mappings(headers, fields))
+
+
+@router.get("/template")
+def download_student_import_template(
+    school_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = _authorize(db, current_user, school_uuid)
+    fields = _resolve_target_fields(db, school.id)
+    filename = student_import_template_filename(school.school_name)
+    return Response(
+        content=build_student_import_template(fields),
+        media_type=XLSX_CONTENT_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{upload_id}/preview", response_model=StudentImportPreviewResponse)
