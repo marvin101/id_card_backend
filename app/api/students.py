@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
@@ -17,7 +18,11 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
-from app.core.file_storage import save_student_photo
+from app.core.file_storage import (
+    delete_storage_object,
+    managed_student_photo_storage_path,
+    save_student_photo,
+)
 from app.core.custom_fields import (
     replace_student_custom_fields,
     validate_student_custom_fields,
@@ -41,6 +46,8 @@ router = APIRouter(
     prefix="/schools/{school_uuid}/students",
     tags=["Students"],
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _student_response_options():
@@ -280,6 +287,8 @@ async def upload_student_photo(
     # Save photo
     # ------------------------------------------------------
 
+    previous_photo_path = student.photo_path
+
     try:
         saved_photo_path = save_student_photo(
             student_uuid=student.uuid,
@@ -298,8 +307,42 @@ async def upload_student_photo(
 
     student.photo_path = saved_photo_path
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        student.photo_path = previous_photo_path
+
+        new_storage_path = managed_student_photo_storage_path(
+            saved_photo_path,
+            student.uuid,
+        )
+        if new_storage_path is not None:
+            try:
+                delete_storage_object(new_storage_path)
+            except Exception:
+                logger.warning(
+                    "Failed to clean up newly orphaned student photo %s",
+                    new_storage_path,
+                    exc_info=True,
+                )
+        raise
+
     db.refresh(student)
+
+    previous_storage_path = managed_student_photo_storage_path(
+        previous_photo_path,
+        student.uuid,
+    )
+    if previous_storage_path is not None:
+        try:
+            delete_storage_object(previous_storage_path)
+        except Exception:
+            logger.warning(
+                "Failed to clean up replaced student photo %s",
+                previous_storage_path,
+                exc_info=True,
+            )
 
     return student
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -15,7 +16,11 @@ from app.core.bulk_student_photos import (
     inspect_zip,
 )
 from app.core.database import get_db
-from app.core.file_storage import save_student_photo
+from app.core.file_storage import (
+    delete_storage_object,
+    managed_student_photo_storage_path,
+    save_student_photo,
+)
 from app.core.school_access import (
     get_active_school,
     require_card_data_access,
@@ -33,6 +38,8 @@ router = APIRouter(
 
 
 MANIFEST_TTL_HOURS = 24
+
+logger = logging.getLogger(__name__)
 
 
 # ==========================================================
@@ -609,9 +616,9 @@ def commit_bulk_student_photos(
 
             continue
 
-        had_existing_photo = bool(
-            student.photo_path
-        )
+        previous_photo_path = student.photo_path
+        had_existing_photo = bool(previous_photo_path)
+        public_url: str | None = None
 
         try:
             public_url = save_student_photo(
@@ -624,27 +631,24 @@ def commit_bulk_student_photos(
 
             db.commit()
 
-            uploaded_count += 1
-
-            if had_existing_photo:
-                replacement_count += 1
-
-            item["status"] = "uploaded"
-
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    student_uuid=student.uuid,
-                    student_name=student.full_name,
-                    status="uploaded",
-                    detail="Photo uploaded successfully.",
-                )
-            )
-
         except Exception as exc:
 
             db.rollback()
+            student.photo_path = previous_photo_path
+
+            new_storage_path = managed_student_photo_storage_path(
+                public_url,
+                student.uuid,
+            )
+            if new_storage_path is not None:
+                try:
+                    delete_storage_object(new_storage_path)
+                except Exception:
+                    logger.warning(
+                        "Failed to clean up newly orphaned student photo %s",
+                        new_storage_path,
+                        exc_info=True,
+                    )
 
             failed_count += 1
             all_processed = False
@@ -659,6 +663,40 @@ def commit_bulk_student_photos(
                     detail=str(exc),
                 )
             )
+
+            continue
+
+        uploaded_count += 1
+
+        if had_existing_photo:
+            replacement_count += 1
+
+        item["status"] = "uploaded"
+
+        results.append(
+            BulkPhotoCommitItem(
+                filename=filename,
+                admission_no=admission_no,
+                student_uuid=student.uuid,
+                student_name=student.full_name,
+                status="uploaded",
+                detail="Photo uploaded successfully.",
+            )
+        )
+
+        previous_storage_path = managed_student_photo_storage_path(
+            previous_photo_path,
+            student.uuid,
+        )
+        if previous_storage_path is not None:
+            try:
+                delete_storage_object(previous_storage_path)
+            except Exception:
+                logger.warning(
+                    "Failed to clean up replaced student photo %s",
+                    previous_storage_path,
+                    exc_info=True,
+                )
 
     if all_processed:
         manifest.status = "completed"

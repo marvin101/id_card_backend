@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
 from PIL import Image
@@ -114,7 +115,7 @@ def save_student_photo(
         content_type,
     )
 
-    filename = f"photo{extension}"
+    filename = f"photo_{uuid4().hex}{extension}"
 
     storage_path = (
         f"students/{student_uuid}/{filename}"
@@ -128,7 +129,7 @@ def save_student_photo(
                 file=content,
                 file_options={
                     "content-type": content_type,
-                    "upsert": "true",
+                    "upsert": "false",
                 },
             )
 
@@ -143,7 +144,62 @@ def save_student_photo(
         .get_public_url(storage_path)
     )
 
-    return public_url
+    return str(public_url)
+
+
+def managed_student_photo_storage_path(
+    photo_path: str | None,
+    student_uuid: UUID | None = None,
+) -> str | None:
+    """Return a safe managed object path for a stored student photo reference."""
+    if not photo_path or not photo_path.strip():
+        return None
+
+    candidate = photo_path.strip()
+
+    if candidate.startswith(("http://", "https://")):
+        parsed = urlsplit(candidate)
+        supabase_url = urlsplit(settings.supabase_url)
+
+        if (
+            parsed.scheme.lower() != supabase_url.scheme.lower()
+            or parsed.netloc.lower() != supabase_url.netloc.lower()
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+
+        public_prefix = (
+            f"{supabase_url.path.rstrip('/')}"
+            f"/storage/v1/object/public/{SUPABASE_BUCKET}/"
+        )
+        if not parsed.path.startswith(public_prefix):
+            return None
+
+        candidate = unquote(parsed.path[len(public_prefix):])
+    elif "://" in candidate or candidate.startswith("/"):
+        return None
+
+    parts = candidate.split("/")
+    if len(parts) != 3 or parts[0] != "students":
+        return None
+
+    try:
+        path_student_uuid = UUID(parts[1])
+    except ValueError:
+        return None
+
+    if student_uuid is not None and path_student_uuid != student_uuid:
+        return None
+
+    filename = parts[2]
+    if (
+        not filename.startswith("photo")
+        or Path(filename).suffix.lower() not in ALLOWED_IMAGE_TYPES.values()
+    ):
+        return None
+
+    return candidate
 
 
 def save_school_logo(
