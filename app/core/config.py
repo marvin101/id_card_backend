@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1)
     login_rate_limit_requests: int = Field(default=10, ge=1)
     registration_rate_limit_requests: int = Field(default=5, ge=1)
+    public_form_get_rate_limit_requests: int = Field(default=60, ge=1)
+    public_form_submit_rate_limit_requests: int = Field(default=10, ge=1)
+    public_form_max_request_bytes: int = Field(default=7 * 1024 * 1024, ge=1024)
 
     # Only trust forwarded client addresses when this many known proxies sit
     # directly in front of the application. Keep at 0 for direct exposure.

@@ -20,6 +20,7 @@ from app.api.card_templates import router as card_templates_router
 from app.api.student_fields import router as student_fields_router
 from app.api.student_imports import router as student_imports_router
 from app.api.bulk_student_photos import router as bulk_student_photos_router
+from app.api.public_forms import management_router as public_form_management_router, public_router as public_forms_router
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +59,8 @@ app.include_router(card_templates_router)
 app.include_router(student_fields_router)
 app.include_router(student_imports_router)
 app.include_router(bulk_student_photos_router)
+app.include_router(public_form_management_router)
+app.include_router(public_forms_router)
 # ==========================================================
 # Health Check
 # ==========================================================

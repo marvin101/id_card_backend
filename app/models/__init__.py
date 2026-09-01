@@ -10,6 +10,7 @@ from app.models.student_audit_event import StudentAuditEvent
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.models.bulk_photo_import import BulkPhotoImport
+from app.models.public_form import PublicForm
 
 __all__ = [
     "AcademicSession",
@@ -25,4 +26,5 @@ __all__ = [
     "StudentCustomFieldValue",
     "User",
     "UserSchoolAccess",
+    "PublicForm",
 ]

@@ -48,7 +48,7 @@ def record_student_audit(
     db: Session,
     *,
     student: Student,
-    actor: User,
+    actor: User | None,
     event_type: str,
     field_name: str | None = None,
     old_value: Any = None,
@@ -62,7 +62,7 @@ def record_student_audit(
     event = StudentAuditEvent(
         school_id=student.school_id,
         student_id=student.id,
-        actor_user_id=actor.id,
+        actor_user_id=actor.id if actor is not None else None,
         event_type=event_type,
         field_name=field_name,
         old_value=audit_value(old_value),

@@ -66,6 +66,7 @@ class InMemoryRateLimiter:
 
 
 auth_rate_limiter = InMemoryRateLimiter()
+public_form_rate_limiter = InMemoryRateLimiter()
 
 
 def _normalized_ip(value: str | None) -> str | None:
@@ -129,3 +130,19 @@ def enforce_registration_rate_limit(request: Request) -> None:
         bucket="registration",
         limit=settings.registration_rate_limit_requests,
     )
+
+
+def enforce_public_form_rate_limit(request: Request, *, submission: bool) -> None:
+    if not settings.auth_rate_limit_enabled:
+        return
+    decision = public_form_rate_limiter.check(
+        f"public-form-{'post' if submission else 'get'}:{get_client_address(request)}",
+        limit=(settings.public_form_submit_rate_limit_requests if submission else settings.public_form_get_rate_limit_requests),
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+            headers={"Retry-After": str(decision.retry_after)},
+        )
