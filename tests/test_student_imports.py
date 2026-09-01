@@ -382,6 +382,10 @@ def test_commit_adds_all_rows_then_flushes_and_commits_once(monkeypatch):
     )
 
     assert len(db.added) == 4
+    assert [event.event_type for event in db.added[2:]] == [
+        "student_created",
+        "student_created",
+    ]
     assert db.flush_count == 1
     assert db.commit_count == 1
     assert db.rollback_count == 0

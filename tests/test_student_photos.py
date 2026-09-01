@@ -310,6 +310,7 @@ def test_manual_replacement_commits_new_url_before_deleting_old(monkeypatch):
     result = _upload_manually(student, session)
 
     assert result.photo_path == new_url
+    assert session.added[0].event_type == "student_photo_replaced"
     assert events == [
         "commit",
         "refresh",
@@ -410,6 +411,7 @@ def test_bulk_replacement_commits_before_old_photo_cleanup(monkeypatch):
     assert response.replacement_count == 1
     assert response.failed_count == 0
     assert student.photo_path == new_url
+    assert session.added[0].event_type == "student_photo_replaced"
     assert events[:2] == [
         "commit",
         f"delete:students/{student.uuid}/photo_old.png",

@@ -27,7 +27,11 @@ from app.core.custom_fields import (
     replace_student_custom_fields,
     validate_student_custom_fields,
 )
-from app.core.student_audit import record_student_audit, record_student_field_changes
+from app.core.student_audit import (
+    custom_field_change_set,
+    record_student_audit,
+    record_student_field_changes,
+)
 from app.core.school_access import (
     get_active_school,
     require_card_data_access,
@@ -772,6 +776,63 @@ def list_students_paged(
 # Lifecycle actions
 # ==========================================================
 
+_BATCH_VERIFIABLE_STATUSES = frozenset(
+    {VerificationStatus.PENDING.value, VerificationStatus.NEEDS_CORRECTION.value}
+)
+
+
+def _apply_verification_transition(
+    db: Session,
+    *,
+    student: Student,
+    actor: User,
+    target_status: VerificationStatus,
+    note: str | None,
+    verified_at: datetime | None = None,
+) -> bool:
+    """Apply one validated transition and audit only persisted changes."""
+    old_status = student.verification_status
+    old_note = student.correction_note
+    target_note = note if target_status == VerificationStatus.NEEDS_CORRECTION else None
+
+    if old_status == target_status.value and old_note == target_note:
+        return False
+
+    student.verification_status = target_status.value
+    student.correction_note = target_note
+    if target_status == VerificationStatus.VERIFIED:
+        # Preserve the original verifier metadata for an idempotent repeated verify.
+        if old_status != VerificationStatus.VERIFIED.value:
+            student.verified_at = verified_at or datetime.now(timezone.utc)
+            student.verified_by_user_id = actor.id
+    else:
+        student.verified_at = None
+        student.verified_by_user_id = None
+
+    if old_status != student.verification_status:
+        record_student_audit(
+            db,
+            student=student,
+            actor=actor,
+            event_type="verification_status_changed",
+            field_name="verification_status",
+            old_value=old_status,
+            new_value=student.verification_status,
+            note=target_note,
+        )
+    if old_note != student.correction_note:
+        record_student_audit(
+            db,
+            student=student,
+            actor=actor,
+            event_type="correction_note_changed",
+            field_name="correction_note",
+            old_value=old_note,
+            new_value=student.correction_note,
+            note=target_note,
+        )
+    return True
+
 @router.patch("/{student_uuid}/verification", response_model=StudentResponse)
 def update_student_verification(
     school_uuid: UUID,
@@ -793,31 +854,16 @@ def update_student_verification(
             detail="A correction note is required when marking Needs Correction",
         )
 
-    old_status = student.verification_status
-    old_note = student.correction_note
-    student.verification_status = payload.status.value
-    student.correction_note = note if payload.status == VerificationStatus.NEEDS_CORRECTION else None
-    if payload.status == VerificationStatus.VERIFIED:
-        student.verified_at = datetime.now(timezone.utc)
-        student.verified_by_user_id = current_user.id
-    else:
-        student.verified_at = None
-        student.verified_by_user_id = None
-
-    if old_status != student.verification_status:
-        record_student_audit(
-            db, student=student, actor=current_user,
-            event_type="verification_status_changed", field_name="verification_status",
-            old_value=old_status, new_value=student.verification_status, note=note,
-        )
-    if old_note != student.correction_note:
-        record_student_audit(
-            db, student=student, actor=current_user,
-            event_type="correction_note_changed", field_name="correction_note",
-            old_value=old_note, new_value=student.correction_note, note=note,
-        )
-    db.commit()
-    db.refresh(student)
+    changed = _apply_verification_transition(
+        db,
+        student=student,
+        actor=current_user,
+        target_status=payload.status,
+        note=note,
+    )
+    if changed:
+        db.commit()
+        db.refresh(student)
     return student
 
 
@@ -896,17 +942,27 @@ def batch_verify_students(
     ).scalars().all()
     if len(students) != len(unique_uuids):
         raise HTTPException(status_code=404, detail="One or more students were not found in this school")
+    ineligible_count = sum(
+        student.verification_status not in _BATCH_VERIFIABLE_STATUSES
+        for student in students
+    )
+    if ineligible_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{ineligible_count} selected student(s) are already verified; "
+                "batch verify accepts only Pending or Needs Correction records"
+            ),
+        )
     now = datetime.now(timezone.utc)
     for student in students:
-        old_status = student.verification_status
-        student.verification_status = VerificationStatus.VERIFIED.value
-        student.correction_note = None
-        student.verified_at = now
-        student.verified_by_user_id = current_user.id
-        record_student_audit(
-            db, student=student, actor=current_user,
-            event_type="verification_status_changed", field_name="verification_status",
-            old_value=old_status, new_value=student.verification_status,
+        _apply_verification_transition(
+            db,
+            student=student,
+            actor=current_user,
+            target_status=VerificationStatus.VERIFIED,
+            note=None,
+            verified_at=now,
         )
     db.commit()
     return StudentBatchResult(updated_count=len(students), students=students)
@@ -1275,11 +1331,9 @@ def update_student(
             definition.field_key: value
             for definition, value in validated_custom_fields
         }
-        for key in before_custom_fields.keys() | after_custom_fields.keys():
-            if before_custom_fields.get(key) != after_custom_fields.get(key):
-                changes[f"custom_fields.{key}"] = (
-                    before_custom_fields.get(key), after_custom_fields.get(key)
-                )
+        changes.update(
+            custom_field_change_set(before_custom_fields, after_custom_fields)
+        )
     photo_change = changes.pop("photo_path", None)
     record_student_field_changes(
         db, student=student, actor=current_user, changes=changes

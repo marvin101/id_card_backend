@@ -7,7 +7,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api import students as students_api
-from app.core.student_audit import audit_value, record_student_field_changes
+from app.core.student_audit import (
+    audit_value,
+    custom_field_change_set,
+    is_sensitive_audit_field,
+    record_student_audit,
+    record_student_field_changes,
+)
 from app.models.student import Student
 from app.schemas.student import (
     StudentBatchRequest,
@@ -122,6 +128,26 @@ def test_verify_sets_actor_timestamp_and_audits(monkeypatch):
     assert db.added[0].event_type == "verification_status_changed"
 
 
+def test_repeated_verify_is_idempotent_and_preserves_actor_metadata(monkeypatch):
+    student = _student(status="verified")
+    original_time = object()
+    student.verified_at = original_time
+    student.verified_by_user_id = 11
+    _authorize(monkeypatch, student)
+    db = _Db()
+
+    students_api.update_student_verification(
+        uuid4(), student.uuid,
+        StudentVerificationUpdate(status=VerificationStatus.VERIFIED),
+        db=db, current_user=SimpleNamespace(id=99),
+    )
+
+    assert student.verified_at is original_time
+    assert student.verified_by_user_id == 11
+    assert db.added == []
+    assert db.commits == 0
+
+
 def test_needs_correction_stores_note_and_reset_pending_clears_it(monkeypatch):
     student = _student()
     _authorize(monkeypatch, student)
@@ -137,6 +163,32 @@ def test_needs_correction_stores_note_and_reset_pending_clears_it(monkeypatch):
         db=_Db(), current_user=SimpleNamespace(id=11),
     )
     assert student.correction_note is None
+    assert student.verified_at is None
+    assert student.verified_by_user_id is None
+
+
+@pytest.mark.parametrize("target", ["pending", "needs_correction"])
+def test_leaving_verified_clears_verifier_but_preserves_print_history(monkeypatch, target):
+    student = _student(status="verified", print_count=2)
+    student.verified_at = object()
+    student.verified_by_user_id = 11
+    student.printed_at = object()
+    student.printed_by_user_id = 22
+    _authorize(monkeypatch, student)
+    payload = StudentVerificationUpdate(
+        status=target,
+        note="Photo needs replacement" if target == "needs_correction" else None,
+    )
+
+    students_api.update_student_verification(
+        uuid4(), student.uuid, payload, db=_Db(), current_user=SimpleNamespace(id=33)
+    )
+
+    assert student.verified_at is None
+    assert student.verified_by_user_id is None
+    assert student.print_count == 2
+    assert student.printed_at is not None
+    assert student.printed_by_user_id == 22
 
 
 def test_mark_printed_and_reprint_increment_and_audit(monkeypatch):
@@ -202,6 +254,46 @@ def test_batch_verify_and_batch_print_create_one_audit_per_student(monkeypatch):
     assert len(print_db.added) == 2
 
 
+def test_batch_verify_rejects_already_verified_selection_without_mutation(monkeypatch):
+    pending = _student()
+    verified = _student(status="verified")
+    monkeypatch.setattr(students_api, "get_active_school", lambda *_: SimpleNamespace(id=3))
+    monkeypatch.setattr(students_api, "require_school_admin", lambda *_args, **_kwargs: None)
+    db = _Db([pending, verified])
+    payload = StudentBatchRequest(student_uuids=[pending.uuid, verified.uuid])
+
+    with pytest.raises(HTTPException) as error:
+        students_api.batch_verify_students(
+            uuid4(), payload, db=db, current_user=SimpleNamespace(id=8)
+        )
+
+    assert error.value.status_code == 409
+    assert "1 selected student(s)" in error.value.detail
+    assert pending.verification_status == "pending"
+    assert verified.verification_status == "verified"
+    assert db.added == []
+    assert db.commits == 0
+
+
+def test_batch_verify_clears_correction_note_with_audit(monkeypatch):
+    student = _student(status="needs_correction")
+    student.correction_note = "Retake photo"
+    monkeypatch.setattr(students_api, "get_active_school", lambda *_: SimpleNamespace(id=3))
+    monkeypatch.setattr(students_api, "require_school_admin", lambda *_args, **_kwargs: None)
+    db = _Db([student])
+
+    students_api.batch_verify_students(
+        uuid4(), StudentBatchRequest(student_uuids=[student.uuid]),
+        db=db, current_user=SimpleNamespace(id=8),
+    )
+
+    assert student.correction_note is None
+    assert [event.field_name for event in db.added] == [
+        "verification_status",
+        "correction_note",
+    ]
+
+
 def test_audit_helper_logs_only_changed_fields_and_json_safe_values():
     db = _Db()
     student = _student()
@@ -212,6 +304,60 @@ def test_audit_helper_logs_only_changed_fields_and_json_safe_values():
     assert len(db.added) == 1
     assert db.added[0].field_name == "dob"
     assert audit_value(uuid4()) is not None
+
+
+def test_custom_field_audit_includes_changes_and_omits_unchanged_values():
+    changes = custom_field_change_set(
+        {"house": "Red", "unchanged": "Same", "removed": "Old"},
+        {"house": "Blue", "unchanged": "Same", "added": "New"},
+    )
+    assert changes == {
+        "custom_fields.house": ("Red", "Blue"),
+        "custom_fields.removed": ("Old", None),
+        "custom_fields.added": (None, "New"),
+    }
+
+
+def test_soft_delete_audits_deactivation_before_commit(monkeypatch):
+    student = _student()
+    monkeypatch.setattr(students_api, "get_active_school", lambda *_: SimpleNamespace(id=3))
+    monkeypatch.setattr(students_api, "require_school_admin", lambda *_args, **_kwargs: None)
+
+    class DeleteDb(_Db):
+        def execute(self, _statement):
+            value = student
+
+            class Result:
+                def scalar_one_or_none(self):
+                    return value
+
+            return Result()
+
+    db = DeleteDb()
+    students_api.delete_student(
+        uuid4(), student.uuid, db=db, current_user=SimpleNamespace(id=5)
+    )
+
+    assert student.is_active is False
+    assert db.commits == 1
+    assert len(db.added) == 1
+    assert db.added[0].event_type == "student_deactivated"
+    assert db.added[0].old_value is True
+    assert db.added[0].new_value is False
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["password", "password_hash", "api_token", "custom_fields.secret"],
+)
+def test_sensitive_audit_fields_are_rejected(field_name):
+    assert is_sensitive_audit_field(field_name)
+    with pytest.raises(ValueError, match="Sensitive fields"):
+        record_student_audit(
+            _Db(), student=_student(), actor=SimpleNamespace(id=1),
+            event_type="student_field_updated", field_name=field_name,
+            old_value="old", new_value="new",
+        )
 
 
 def test_lifecycle_model_derives_ready_and_printed_without_persisted_drift():

@@ -13,6 +13,24 @@ from app.models.users import User
 SENSITIVE_FIELDS = frozenset({"password", "password_hash", "token", "secret"})
 
 
+def is_sensitive_audit_field(field_name: str | None) -> bool:
+    """Return whether an audit field path could contain authentication data."""
+    if not field_name:
+        return False
+    parts = {
+        part.casefold().replace("-", "_")
+        for part in field_name.replace("[", ".").replace("]", "").split(".")
+        if part
+    }
+    return any(
+        part in SENSITIVE_FIELDS
+        or "password" in part
+        or "secret" in part
+        or part.endswith("_token")
+        for part in parts
+    )
+
+
 def audit_value(value: Any) -> Any:
     """Convert a model value into JSON-safe audit data."""
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -39,7 +57,7 @@ def record_student_audit(
 ) -> StudentAuditEvent:
     if student.id is None:
         raise ValueError("Student must be flushed before recording an audit event")
-    if field_name and field_name.casefold() in SENSITIVE_FIELDS:
+    if is_sensitive_audit_field(field_name):
         raise ValueError("Sensitive fields cannot be written to student audit history")
     event = StudentAuditEvent(
         school_id=student.school_id,
@@ -74,3 +92,18 @@ def record_student_field_changes(
             old_value=old_value,
             new_value=new_value,
         )
+
+
+def custom_field_change_set(
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> dict[str, tuple[Any, Any]]:
+    """Build stable, non-noisy audit changes for student custom fields."""
+    return {
+        f"custom_fields.{field_key}": (
+            before.get(field_key),
+            after.get(field_key),
+        )
+        for field_key in before.keys() | after.keys()
+        if audit_value(before.get(field_key)) != audit_value(after.get(field_key))
+    }
