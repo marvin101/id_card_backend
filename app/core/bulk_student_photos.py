@@ -122,22 +122,24 @@ def inspect_zip(
         archive = zipfile.ZipFile(
             io.BytesIO(content)
         )
-
-        if archive.testzip() is not None:
-            raise BulkPhotoValidationError(
-                "ZIP archive is corrupt."
-            )
-
     except zipfile.BadZipFile as exc:
         raise BulkPhotoValidationError(
             "The uploaded file is not a valid ZIP archive."
         ) from exc
 
-    infos = [
-        info
-        for info in archive.infolist()
-        if not info.is_dir()
-    ]
+    all_infos = archive.infolist()
+
+    if any(info.is_dir() for info in all_infos):
+        raise BulkPhotoValidationError(
+            "Directory entries are not allowed in the ZIP archive."
+        )
+
+    infos = all_infos
+
+    if not infos:
+        raise BulkPhotoValidationError(
+            "ZIP archive contains no files."
+        )
 
     if len(infos) > MAX_FILES:
         raise BulkPhotoValidationError(
@@ -153,6 +155,16 @@ def inspect_zip(
         raise BulkPhotoValidationError(
             "Expanded ZIP contents must not exceed 100 MB."
         )
+
+    try:
+        if archive.testzip() is not None:
+            raise BulkPhotoValidationError(
+                "ZIP archive is corrupt."
+            )
+    except (RuntimeError, zipfile.BadZipFile) as exc:
+        raise BulkPhotoValidationError(
+            "ZIP archive is corrupt or unreadable."
+        ) from exc
 
     result: list[dict] = []
 
@@ -180,6 +192,8 @@ def inspect_zip(
                 {
                     "filename": filename,
                     "admission_no": admission_no,
+                    "extension": extension,
+                    "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
                         "Only JPG, JPEG, PNG and "
@@ -196,6 +210,8 @@ def inspect_zip(
                 {
                     "filename": filename,
                     "admission_no": "",
+                    "extension": extension,
+                    "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
                         "Filename must contain "
@@ -214,6 +230,8 @@ def inspect_zip(
                 {
                     "filename": filename,
                     "admission_no": admission_no,
+                    "extension": extension,
+                    "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
                         "Duplicate admission number "
@@ -234,6 +252,8 @@ def inspect_zip(
                 {
                     "filename": filename,
                     "admission_no": admission_no,
+                    "extension": extension,
+                    "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
                         "Image exceeds the 5 MB limit."
@@ -251,12 +271,14 @@ def inspect_zip(
                 extension,
             )
 
-        except ValueError as exc:
+        except (ValueError, RuntimeError, zipfile.BadZipFile) as exc:
 
             result.append(
                 {
                     "filename": filename,
                     "admission_no": admission_no,
+                    "extension": extension,
+                    "file_size": info.file_size,
                     "status": "invalid",
                     "detail": str(exc),
                 }
@@ -271,6 +293,7 @@ def inspect_zip(
                 "status": "pending",
                 "content": image_content,
                 "extension": extension,
+                "file_size": len(image_content),
             }
         )
 

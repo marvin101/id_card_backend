@@ -42,18 +42,10 @@ class BulkPhotoImport(Base):
         index=True,
     )
 
-    # Original ZIP contents are persisted here as JSON.
-    #
-    # Each item contains:
-    # {
-    #   "filename": "...",
-    #   "admission_no": "...",
-    #   "content": "<base64>",
-    #   "content_type": "image/jpeg"
-    # }
-    #
-    # This is deliberately temporary data and should be deleted
-    # after successful processing or expiry.
+    # Metadata-only manifest. Temporary image binaries are stored in
+    # Supabase Storage and referenced by a guarded temp_storage_path.
+    # Raw bytes, base64 payloads, signed URLs, and credentials must never
+    # be persisted here.
     manifest: Mapped[list] = mapped_column(
         JSONB,
         nullable=False,

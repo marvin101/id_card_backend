@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import io
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -155,9 +154,15 @@ def _upload_manually(student, session):
 
 
 def _bulk_context(student):
-    content = base64.b64encode(_png_bytes()).decode("ascii")
+    manifest_uuid = uuid4()
+    school_uuid = uuid4()
+    temp_path = (
+        f"schools/{school_uuid}/bulk-photo-imports/"
+        f"{manifest_uuid}/{uuid4().hex}.png"
+    )
     manifest = SimpleNamespace(
-        uuid=uuid4(),
+        uuid=manifest_uuid,
+        school_uuid=school_uuid,
         school_id=20,
         user_id=1,
         expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
@@ -167,8 +172,10 @@ def _bulk_context(student):
             {
                 "filename": "A-1.png",
                 "admission_no": "A-1",
-                "content": content,
+                "temp_storage_path": temp_path,
                 "content_type": "image/png",
+                "extension": ".png",
+                "file_size": len(_png_bytes()),
                 "status": "ready",
             }
         ],
@@ -180,13 +187,14 @@ def _commit_bulk(monkeypatch, student, session):
     monkeypatch.setattr(
         bulk_api,
         "_authorize",
-        lambda *_args: SimpleNamespace(id=20),
+        lambda *_args: SimpleNamespace(id=20, uuid=session.manifest.school_uuid),
     )
     monkeypatch.setattr(
         bulk_api,
         "_student_lookup",
         lambda *_args: {"a-1": student},
     )
+    monkeypatch.setattr(bulk_api, "download_storage_object", lambda _path: _png_bytes())
     return bulk_api.commit_bulk_student_photos(
         school_uuid=uuid4(),
         manifest_uuid=session.manifest.uuid,
@@ -215,6 +223,40 @@ def test_student_photo_uploads_use_unique_versioned_non_overwrite_paths(monkeypa
     assert first_upload["file_options"]["upsert"] == "false"
     assert second_upload["file_options"]["upsert"] == "false"
     assert first != second
+
+
+def test_bulk_temp_upload_uses_guarded_school_and_import_namespace(monkeypatch):
+    bucket = _StorageBucket()
+    monkeypatch.setattr(
+        file_storage,
+        "supabase",
+        SimpleNamespace(storage=_Storage(bucket)),
+    )
+    school_uuid = uuid4()
+    upload_uuid = uuid4()
+
+    storage_path = file_storage.save_bulk_photo_temp(
+        school_uuid=school_uuid,
+        upload_uuid=upload_uuid,
+        content=_png_bytes(),
+        content_type="image/png",
+    )
+
+    assert storage_path.startswith(
+        f"schools/{school_uuid}/bulk-photo-imports/{upload_uuid}/"
+    )
+    assert storage_path.endswith(".png")
+    assert bucket.uploads[0]["file_options"]["upsert"] == "false"
+    assert file_storage.managed_bulk_photo_temp_storage_path(
+        storage_path,
+        school_uuid=school_uuid,
+        upload_uuid=upload_uuid,
+    ) == storage_path
+    assert file_storage.managed_bulk_photo_temp_storage_path(
+        f"students/{uuid4()}/photo.png",
+        school_uuid=school_uuid,
+        upload_uuid=upload_uuid,
+    ) is None
 
 
 @pytest.mark.parametrize(
@@ -396,6 +438,7 @@ def test_bulk_replacement_commits_before_old_photo_cleanup(monkeypatch):
     student.photo_path = _managed_url(student.uuid)
     new_url = _managed_url(student.uuid, "photo_new.png")
     manifest = _bulk_context(student)
+    temp_path = manifest.manifest[0]["temp_storage_path"]
     events = []
     session = _BulkSession(manifest, events=events)
     monkeypatch.setattr(bulk_api, "save_student_photo", lambda *_args: new_url)
@@ -416,6 +459,7 @@ def test_bulk_replacement_commits_before_old_photo_cleanup(monkeypatch):
         "commit",
         f"delete:students/{student.uuid}/photo_old.png",
     ]
+    assert events[2] == f"delete:{temp_path}"
 
 
 def test_bulk_database_failure_keeps_old_and_cleans_new_upload(monkeypatch):

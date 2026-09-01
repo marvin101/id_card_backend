@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import base64
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
@@ -17,8 +16,12 @@ from app.core.bulk_student_photos import (
 )
 from app.core.database import get_db
 from app.core.file_storage import (
+    StorageError,
     delete_storage_object,
+    download_storage_object,
+    managed_bulk_photo_temp_storage_path,
     managed_student_photo_storage_path,
+    save_bulk_photo_temp,
     save_student_photo,
 )
 from app.core.school_access import (
@@ -173,111 +176,169 @@ def _mime_type_from_extension(
     }[extension]
 
 
+def _resolved_manifest_entries(
+    entries: list[dict[str, Any]],
+    students: dict[str, Student],
+) -> list[dict[str, Any]]:
+    resolved: list[dict[str, Any]] = []
+
+    for original in entries:
+        item = dict(original)
+        if item.get("status") in {"invalid", "uploaded"}:
+            resolved.append(item)
+            continue
+
+        admission_no = item.get("admission_no", "").strip()
+        student = students.get(admission_no.casefold())
+        if student is None:
+            item.update(
+                status="unmatched",
+                student_uuid=None,
+                student_name=None,
+                has_existing_photo=False,
+                replacement=False,
+                detail="Student was not found in the selected school.",
+            )
+        else:
+            has_existing_photo = bool(student.photo_path)
+            item.update(
+                status="ready",
+                student_uuid=str(student.uuid),
+                student_name=student.full_name,
+                has_existing_photo=has_existing_photo,
+                replacement=has_existing_photo,
+                detail=None,
+            )
+        resolved.append(item)
+
+    return resolved
+
+
+def _safe_delete_paths(paths: list[str], *, context: str) -> bool:
+    succeeded = True
+    for storage_path in paths:
+        try:
+            delete_storage_object(storage_path)
+        except Exception:
+            succeeded = False
+            logger.warning(
+                "Failed to clean up %s object %s",
+                context,
+                storage_path,
+                exc_info=True,
+            )
+    return succeeded
+
+
+def _temp_paths_for_import(
+    manifest: BulkPhotoImport,
+    *,
+    school_uuid: UUID,
+) -> tuple[list[str], bool]:
+    paths: list[str] = []
+    all_paths_safe = True
+    manifest_entries = [dict(item) for item in manifest.manifest]
+
+    for item in manifest_entries:
+        candidate = item.get("temp_storage_path")
+        if not candidate:
+            continue
+        safe_path = managed_bulk_photo_temp_storage_path(
+            candidate,
+            school_uuid=school_uuid,
+            upload_uuid=manifest.uuid,
+        )
+        if safe_path is None:
+            all_paths_safe = False
+            logger.warning(
+                "Refusing unsafe bulk-photo temp path for import %s",
+                manifest.uuid,
+            )
+            continue
+        paths.append(safe_path)
+    return paths, all_paths_safe
+
+
+def cleanup_bulk_photo_import(
+    db: Session,
+    manifest: BulkPhotoImport,
+    *,
+    school_uuid: UUID,
+) -> bool:
+    """Delete an import only after its known temporary objects are removed."""
+    paths, all_paths_safe = _temp_paths_for_import(
+        manifest,
+        school_uuid=school_uuid,
+    )
+    if not all_paths_safe or not _safe_delete_paths(paths, context="expired temp"):
+        return False
+
+    try:
+        db.delete(manifest)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning(
+            "Failed to delete expired bulk-photo import %s",
+            manifest.uuid,
+            exc_info=True,
+        )
+        return False
+    return True
+
+
+def cleanup_expired_bulk_photo_imports(
+    db: Session,
+    *,
+    school_id: int,
+    school_uuid: UUID,
+    now: datetime | None = None,
+) -> int:
+    """On-access cleanup for abandoned imports; no scheduler is required."""
+    expired = db.execute(
+        select(BulkPhotoImport).where(
+            BulkPhotoImport.school_id == school_id,
+            BulkPhotoImport.expires_at <= (now or datetime.now(timezone.utc)),
+        )
+    ).scalars().all()
+    return sum(
+        cleanup_bulk_photo_import(db, item, school_uuid=school_uuid)
+        for item in expired
+    )
+
+
 def _preview_manifest(
     db: Session,
     manifest: BulkPhotoImport,
     school_id: int,
 ) -> BulkPhotoPreviewResponse:
-
-    students = _student_lookup(
-        db,
-        school_id,
+    resolved = _resolved_manifest_entries(
+        manifest.manifest,
+        _student_lookup(db, school_id),
+    )
+    items = [
+        BulkPhotoItem(
+            filename=item.get("filename", ""),
+            admission_no=item.get("admission_no", "").strip(),
+            student_uuid=item.get("student_uuid"),
+            student_name=item.get("student_name"),
+            status=item.get("status", "invalid"),
+            detail=item.get("detail"),
+            has_existing_photo=bool(item.get("has_existing_photo")),
+        )
+        for item in resolved
+    ]
+    ready_count = sum(item.status == "ready" for item in items)
+    unmatched_count = sum(item.status == "unmatched" for item in items)
+    invalid_count = sum(item.status == "invalid" for item in items)
+    replacement_count = sum(
+        item.status == "ready" and item.has_existing_photo
+        for item in items
     )
 
-    items: list[BulkPhotoItem] = []
-
-    ready_count = 0
-    unmatched_count = 0
-    invalid_count = 0
-    replacement_count = 0
-
-    changed = False
-
-    for item in manifest.manifest:
-
-        filename = item.get("filename", "")
-        admission_no = item.get("admission_no", "").strip()
-
-        current_status = item.get("status")
-
-        if current_status == "invalid":
-            invalid_count += 1
-
-            items.append(
-                BulkPhotoItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    status="invalid",
-                    detail=item.get("detail"),
-                )
-            )
-
-            continue
-
-        student = students.get(
-            admission_no.casefold()
-        )
-
-        if student is None:
-
-            item["status"] = "unmatched"
-            item["student_uuid"] = None
-            item["student_name"] = None
-            item["has_existing_photo"] = False
-
-            changed = True
-
-            unmatched_count += 1
-
-            items.append(
-                BulkPhotoItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    status="unmatched",
-                    detail=(
-                        "Student was not found in "
-                        "the selected school."
-                    ),
-                )
-            )
-
-            continue
-
-        has_existing_photo = bool(
-            student.photo_path
-        )
-
-        item["status"] = "ready"
-        item["student_uuid"] = str(
-            student.uuid
-        )
-        item["student_name"] = student.full_name
-        item["has_existing_photo"] = (
-            has_existing_photo
-        )
-
-        changed = True
-
-        ready_count += 1
-
-        if has_existing_photo:
-            replacement_count += 1
-
-        items.append(
-            BulkPhotoItem(
-                filename=filename,
-                admission_no=admission_no,
-                student_uuid=student.uuid,
-                student_name=student.full_name,
-                status="ready",
-                has_existing_photo=has_existing_photo,
-            )
-        )
-
-    if changed:
-        manifest.status = "previewed"
-
-        db.commit()
+    manifest.manifest = resolved
+    manifest.status = "previewed"
+    db.commit()
 
     return BulkPhotoPreviewResponse(
         manifest_uuid=manifest.uuid,
@@ -317,6 +378,20 @@ async def upload_bulk_student_photos(
         school_uuid,
     )
 
+    try:
+        cleanup_expired_bulk_photo_imports(
+            db,
+            school_id=school.id,
+            school_uuid=school.uuid,
+        )
+    except Exception:
+        db.rollback()
+        logger.warning(
+            "On-access bulk-photo cleanup failed for school %s",
+            school.uuid,
+            exc_info=True,
+        )
+
     if archive.content_type not in {
         "application/zip",
         "application/x-zip-compressed",
@@ -338,33 +413,53 @@ async def upload_bulk_student_photos(
             detail=str(exc),
         ) from exc
 
+    upload_uuid = uuid4()
     manifest_entries: list[dict[str, Any]] = []
+    uploaded_temp_paths: list[str] = []
 
-    for entry in entries:
+    try:
+        for entry in entries:
+            admission_no = entry["admission_no"]
+            item = {
+                "item_uuid": str(uuid4()),
+                "filename": entry["filename"],
+                "admission_no": admission_no,
+                "match_key": admission_no.strip().casefold(),
+                "extension": entry.get("extension"),
+                "file_size": entry.get("file_size", 0),
+                "status": entry["status"],
+                "detail": entry.get("detail"),
+            }
 
-        item = {
-            "filename": entry["filename"],
-            "admission_no": entry["admission_no"],
-            "status": entry["status"],
-            "detail": entry.get("detail"),
-        }
-
-        if entry.get("status") == "pending":
-
-            raw_content = entry["content"]
-
-            item["content"] = (
-                base64.b64encode(raw_content)
-                .decode("ascii")
-            )
-
-            item["content_type"] = (
-                _mime_type_from_extension(
-                    entry["extension"]
+            if entry.get("status") == "pending":
+                content_type = _mime_type_from_extension(entry["extension"])
+                temp_storage_path = save_bulk_photo_temp(
+                    school_uuid=school.uuid,
+                    upload_uuid=upload_uuid,
+                    content=entry["content"],
+                    content_type=content_type,
                 )
-            )
+                uploaded_temp_paths.append(temp_storage_path)
+                item.update(
+                    content_type=content_type,
+                    temp_storage_path=temp_storage_path,
+                )
 
-        manifest_entries.append(item)
+            manifest_entries.append(item)
+
+        manifest_entries = _resolved_manifest_entries(
+            manifest_entries,
+            _student_lookup(db, school.id),
+        )
+
+    except Exception as exc:
+        _safe_delete_paths(uploaded_temp_paths, context="partial temp upload")
+        if isinstance(exc, (StorageError, ValueError)):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Temporary photo storage is currently unavailable.",
+            ) from exc
+        raise
 
     expires_at = (
         datetime.now(timezone.utc)
@@ -372,6 +467,7 @@ async def upload_bulk_student_photos(
     )
 
     bulk_import = BulkPhotoImport(
+        uuid=upload_uuid,
         school_id=school.id,
         user_id=current_user.id,
         manifest=manifest_entries,
@@ -380,9 +476,14 @@ async def upload_bulk_student_photos(
         expires_at=expires_at,
     )
 
-    db.add(bulk_import)
-    db.commit()
-    db.refresh(bulk_import)
+    try:
+        db.add(bulk_import)
+        db.commit()
+        db.refresh(bulk_import)
+    except Exception:
+        db.rollback()
+        _safe_delete_paths(uploaded_temp_paths, context="unpersisted temp upload")
+        raise
 
     return BulkPhotoUploadResponse(
         manifest_uuid=bulk_import.uuid,
@@ -430,8 +531,11 @@ def preview_bulk_student_photos(
     if manifest.expires_at <= datetime.now(
         timezone.utc
     ):
-        db.delete(manifest)
-        db.commit()
+        cleanup_bulk_photo_import(
+            db,
+            manifest,
+            school_uuid=school.uuid,
+        )
 
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
@@ -496,8 +600,11 @@ def commit_bulk_student_photos(
     if manifest.expires_at <= datetime.now(
         timezone.utc
     ):
-        db.delete(manifest)
-        db.commit()
+        cleanup_bulk_photo_import(
+            db,
+            manifest,
+            school_uuid=school.uuid,
+        )
 
         raise HTTPException(
             status_code=status.HTTP_410_GONE,
@@ -525,7 +632,9 @@ def commit_bulk_student_photos(
 
     all_processed = True
 
-    for item in manifest.manifest:
+    manifest_entries = [dict(item) for item in manifest.manifest]
+
+    for item in manifest_entries:
 
         filename = item.get("filename", "")
         admission_no = item.get("admission_no", "")
@@ -544,6 +653,21 @@ def commit_bulk_student_photos(
                 )
             )
 
+            continue
+
+        if item.get("status") == "uploaded":
+            uploaded_count += 1
+            replacement_count += int(bool(item.get("replacement")))
+            results.append(
+                BulkPhotoCommitItem(
+                    filename=filename,
+                    admission_no=admission_no,
+                    student_uuid=item.get("student_uuid"),
+                    student_name=item.get("student_name"),
+                    status="uploaded",
+                    detail="Photo was already uploaded.",
+                )
+            )
             continue
 
         student = students.get(
@@ -569,35 +693,13 @@ def commit_bulk_student_photos(
 
             continue
 
-        encoded_content = item.get("content")
+        temp_storage_path = managed_bulk_photo_temp_storage_path(
+            item.get("temp_storage_path"),
+            school_uuid=school.uuid,
+            upload_uuid=manifest.uuid,
+        )
 
-        if not encoded_content:
-
-            failed_count += 1
-            all_processed = False
-
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    student_uuid=student.uuid,
-                    student_name=student.full_name,
-                    status="failed",
-                    detail=(
-                        "Temporary image data is missing."
-                    ),
-                )
-            )
-
-            continue
-
-        try:
-            content = base64.b64decode(
-                encoded_content,
-                validate=True,
-            )
-
-        except Exception:
+        if temp_storage_path is None:
 
             failed_count += 1
             all_processed = False
@@ -610,7 +712,7 @@ def commit_bulk_student_photos(
                     student_name=student.full_name,
                     status="failed",
                     detail=(
-                        "Temporary image data is invalid."
+                        "Temporary photo object is missing or invalid."
                     ),
                 )
             )
@@ -620,8 +722,10 @@ def commit_bulk_student_photos(
         previous_photo_path = student.photo_path
         had_existing_photo = bool(previous_photo_path)
         public_url: str | None = None
+        previous_item = dict(item)
 
         try:
+            content = download_storage_object(temp_storage_path)
             public_url = save_student_photo(
                 student.uuid,
                 content,
@@ -641,12 +745,24 @@ def commit_bulk_student_photos(
                 note="Bulk photo import",
             )
 
+            item.update(
+                status="uploaded",
+                detail="Photo uploaded successfully.",
+                student_uuid=str(student.uuid),
+                student_name=student.full_name,
+                has_existing_photo=had_existing_photo,
+                replacement=had_existing_photo,
+            )
+            manifest.manifest = manifest_entries
             db.commit()
 
         except Exception as exc:
 
             db.rollback()
             student.photo_path = previous_photo_path
+            item.clear()
+            item.update(previous_item)
+            manifest.manifest = manifest_entries
 
             new_storage_path = managed_student_photo_storage_path(
                 public_url,
@@ -683,8 +799,6 @@ def commit_bulk_student_photos(
         if had_existing_photo:
             replacement_count += 1
 
-        item["status"] = "uploaded"
-
         results.append(
             BulkPhotoCommitItem(
                 filename=filename,
@@ -710,6 +824,10 @@ def commit_bulk_student_photos(
                     exc_info=True,
                 )
 
+        if _safe_delete_paths([temp_storage_path], context="consumed temp"):
+            item["temp_storage_path"] = None
+
+    manifest.manifest = manifest_entries
     if all_processed:
         manifest.status = "completed"
         db.commit()

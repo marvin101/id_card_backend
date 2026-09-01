@@ -147,6 +147,90 @@ def save_student_photo(
     return str(public_url)
 
 
+def save_bulk_photo_temp(
+    *,
+    school_uuid: UUID,
+    upload_uuid: UUID,
+    content: bytes,
+    content_type: str | None,
+) -> str:
+    """Store a validated bulk-import image under an unguessable temporary path."""
+    extension = validate_student_photo(content, content_type)
+    storage_path = (
+        f"schools/{school_uuid}/bulk-photo-imports/"
+        f"{upload_uuid}/{uuid4().hex}{extension}"
+    )
+
+    try:
+        supabase.storage.from_(SUPABASE_BUCKET).upload(
+            path=storage_path,
+            file=content,
+            file_options={
+                "content-type": content_type,
+                "upsert": "false",
+            },
+        )
+    except Exception as exc:
+        raise StorageError(
+            f"Failed to upload temporary bulk photo: {exc}"
+        ) from exc
+
+    return storage_path
+
+
+def download_storage_object(storage_path: str) -> bytes:
+    """Download an object for backend-side promotion without involving the DB."""
+    try:
+        content = supabase.storage.from_(SUPABASE_BUCKET).download(storage_path)
+    except Exception as exc:
+        raise StorageError(f"Failed to download stored media: {exc}") from exc
+
+    if not isinstance(content, (bytes, bytearray)):
+        raise StorageError("Stored media download returned an invalid payload.")
+    return bytes(content)
+
+
+def managed_bulk_photo_temp_storage_path(
+    storage_path: str | None,
+    *,
+    school_uuid: UUID,
+    upload_uuid: UUID,
+) -> str | None:
+    """Accept only a temp object belonging to the expected school and import."""
+    if not storage_path or not storage_path.strip():
+        return None
+
+    candidate = storage_path.strip()
+    if "://" in candidate or candidate.startswith("/") or "?" in candidate:
+        return None
+
+    parts = candidate.split("/")
+    if len(parts) != 5:
+        return None
+    if parts[0] != "schools" or parts[2] != "bulk-photo-imports":
+        return None
+
+    try:
+        path_school_uuid = UUID(parts[1])
+        path_upload_uuid = UUID(parts[3])
+    except ValueError:
+        return None
+
+    if path_school_uuid != school_uuid or path_upload_uuid != upload_uuid:
+        return None
+
+    filename = parts[4]
+    stem = Path(filename).stem
+    try:
+        UUID(hex=stem)
+    except ValueError:
+        return None
+    if Path(filename).suffix.lower() not in ALLOWED_IMAGE_TYPES.values():
+        return None
+
+    return candidate
+
+
 def managed_student_photo_storage_path(
     photo_path: str | None,
     student_uuid: UUID | None = None,
