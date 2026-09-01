@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from uuid import UUID
 
@@ -19,14 +19,48 @@ class StudentCustomFieldResponse(BaseModel):
     is_active: bool
 
 class BloodGroup(str, Enum):
-        A_POSITIVE = "A+"
-        A_NEGATIVE = "A-"
-        B_POSITIVE = "B+"
-        B_NEGATIVE = "B-"
-        AB_POSITIVE = "AB+"
-        AB_NEGATIVE = "AB-"
-        O_POSITIVE = "O+"
-        O_NEGATIVE = "O-"
+    A_POSITIVE = "A+"
+    A_NEGATIVE = "A-"
+    B_POSITIVE = "B+"
+    B_NEGATIVE = "B-"
+    AB_POSITIVE = "AB+"
+    AB_NEGATIVE = "AB-"
+    O_POSITIVE = "O+"
+    O_NEGATIVE = "O-"
+
+
+class VerificationStatus(str, Enum):
+    PENDING = "pending"
+    NEEDS_CORRECTION = "needs_correction"
+    VERIFIED = "verified"
+
+
+class StudentVerificationUpdate(BaseModel):
+    status: VerificationStatus
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class StudentBatchRequest(BaseModel):
+    student_uuids: list[UUID] = Field(min_length=1, max_length=500)
+
+
+class StudentBatchResult(BaseModel):
+    updated_count: int
+    students: list["StudentResponse"]
+
+
+class StudentAuditEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    uuid: UUID
+    event_type: str
+    field_name: str | None
+    old_value: object | None
+    new_value: object | None
+    note: str | None
+    actor_user_uuid: UUID | None
+    actor_name: str | None
+    created_at: datetime
 
 class StudentCreate(BaseModel):
     # ------------------------------------------------------
@@ -119,6 +153,17 @@ class StudentResponse(BaseModel):
     address: str | None
 
     photo_path: str | None
+
+    verification_status: VerificationStatus = VerificationStatus.PENDING
+    lifecycle_status: str = "pending"
+    correction_note: str | None = None
+    verified_at: datetime | None = None
+    verified_by_user_uuid: UUID | None = None
+    verified_by_name: str | None = None
+    printed_at: datetime | None = None
+    printed_by_user_uuid: UUID | None = None
+    printed_by_name: str | None = None
+    print_count: int = 0
 
     is_active: bool
     custom_fields: list[StudentCustomFieldResponse] = Field(default_factory=list)

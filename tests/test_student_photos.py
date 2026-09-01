@@ -32,6 +32,10 @@ class _StudentSession:
     def execute(self, _statement):
         return _Result(self.student)
 
+    def add(self, value):
+        self.added = getattr(self, "added", [])
+        self.added.append(value)
+
     def commit(self):
         self.events.append("commit")
         if self.fail_commit:
@@ -55,6 +59,10 @@ class _BulkSession:
 
     def execute(self, _statement):
         return _Result(self.manifest)
+
+    def add(self, value):
+        self.added = getattr(self, "added", [])
+        self.added.append(value)
 
     def commit(self):
         self.commit_calls += 1

@@ -26,6 +26,7 @@ from app.core.school_access import (
     require_card_data_access,
 )
 from app.core.security import get_current_user
+from app.core.student_audit import record_student_audit
 from app.models.bulk_photo_import import BulkPhotoImport
 from app.models.student import Student
 from app.models.users import User
@@ -628,6 +629,17 @@ def commit_bulk_student_photos(
             )
 
             student.photo_path = public_url
+
+            record_student_audit(
+                db,
+                student=student,
+                actor=current_user,
+                event_type="student_photo_replaced" if had_existing_photo else "student_photo_added",
+                field_name="photo_path",
+                old_value=previous_photo_path,
+                new_value=public_url,
+                note="Bulk photo import",
+            )
 
             db.commit()
 

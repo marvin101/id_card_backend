@@ -6,6 +6,7 @@ from app.models.school_access_request import SchoolAccessRequest
 from app.models.school_class import SchoolClass
 from app.models.section import Section
 from app.models.student import Student
+from app.models.student_audit_event import StudentAuditEvent
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.models.bulk_photo_import import BulkPhotoImport
@@ -20,6 +21,7 @@ __all__ = [
     "SchoolClass",
     "Section",
     "Student",
+    "StudentAuditEvent",
     "StudentCustomFieldValue",
     "User",
     "UserSchoolAccess",

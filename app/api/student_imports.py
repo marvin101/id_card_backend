@@ -19,6 +19,7 @@ from app.core.student_import_template import (
     build_student_import_template,
     student_import_template_filename,
 )
+from app.core.student_audit import record_student_audit
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.school_class import SchoolClass
@@ -316,6 +317,7 @@ def commit_student_import(school_uuid: UUID, upload_id: UUID, payload: StudentIm
     if not preview.can_import:
         raise HTTPException(status_code=422, detail=preview.model_dump(mode="json"))
     try:
+        students = []
         for row in rows:
             data = row.student_data
             student = Student(
@@ -326,7 +328,17 @@ def commit_student_import(school_uuid: UUID, upload_id: UUID, payload: StudentIm
             )
             db.add(student)
             replace_student_custom_fields(db, student, row.custom_fields or [])
+            students.append(student)
         db.flush()
+        for student in students:
+            record_student_audit(
+                db,
+                student=student,
+                actor=current_user,
+                event_type="student_created",
+                new_value={"admission_no": student.admission_no, "full_name": student.full_name},
+                note="Created by bulk student import",
+            )
         db.commit()
     except IntegrityError as exc:
         db.rollback()

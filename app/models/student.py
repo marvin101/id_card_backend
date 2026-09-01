@@ -11,6 +11,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    CheckConstraint,
     and_,
     func,
 )
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
     from app.models.custom_field import StudentCustomFieldValue
     from app.models.school_class import SchoolClass
     from app.models.section import Section
+    from app.models.student_audit_event import StudentAuditEvent
+    from app.models.users import User
 
 
 def _academic_session_model():
@@ -51,6 +54,11 @@ class Student(Base):
     # ==========================================================
 
     __table_args__ = (
+        CheckConstraint(
+            "verification_status IN ('pending', 'needs_correction', 'verified')",
+            name="ck_student_verification_status",
+        ),
+        CheckConstraint("print_count >= 0", name="ck_student_print_count"),
         # Admission number is permanently unique within a school.
         UniqueConstraint(
             "school_id",
@@ -228,6 +236,30 @@ class Student(Base):
         nullable=True,
     )
 
+    # ==========================================================
+    # Verification and printed lifecycle
+    # ==========================================================
+
+    verification_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default="pending", index=True
+    )
+    correction_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verified_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    printed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    printed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    print_count: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default="0", index=True
+    )
+
         # ==========================================================
     # Relationships
     # ==========================================================
@@ -312,6 +344,37 @@ class Student(Base):
         cascade="all, delete-orphan",
         order_by="StudentCustomFieldValue.id",
     )
+    verified_by: Mapped["User | None"] = relationship(
+        foreign_keys=[verified_by_user_id]
+    )
+    printed_by: Mapped["User | None"] = relationship(
+        foreign_keys=[printed_by_user_id]
+    )
+    audit_events: Mapped[list["StudentAuditEvent"]] = relationship(
+        back_populates="student", cascade="all, delete-orphan"
+    )
+
+    @property
+    def verified_by_user_uuid(self) -> UUID | None:
+        return self.verified_by.uuid if self.verified_by is not None else None
+
+    @property
+    def verified_by_name(self) -> str | None:
+        return self.verified_by.full_name if self.verified_by is not None else None
+
+    @property
+    def printed_by_user_uuid(self) -> UUID | None:
+        return self.printed_by.uuid if self.printed_by is not None else None
+
+    @property
+    def printed_by_name(self) -> str | None:
+        return self.printed_by.full_name if self.printed_by is not None else None
+
+    @property
+    def lifecycle_status(self) -> str:
+        if self.verification_status != "verified":
+            return self.verification_status
+        return "printed" if self.print_count > 0 else "ready_for_print"
 
     @property
     def custom_fields(self) -> list[dict]:

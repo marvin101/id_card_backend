@@ -16,6 +16,7 @@ from app.models import (
     SchoolClass,
     Section,
     Student,
+    StudentAuditEvent,
     User,
     UserSchoolAccess,
 )

@@ -27,6 +27,7 @@ from app.core.custom_fields import (
     replace_student_custom_fields,
     validate_student_custom_fields,
 )
+from app.core.student_audit import record_student_audit, record_student_field_changes
 from app.core.school_access import (
     get_active_school,
     require_card_data_access,
@@ -37,9 +38,19 @@ from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
 from app.models.student import Student
+from app.models.student_audit_event import StudentAuditEvent
 from app.models.custom_field import StudentCustomFieldValue
 from app.models.users import User
-from app.schemas.student import StudentCreate, StudentResponse, StudentUpdate
+from app.schemas.student import (
+    StudentAuditEventResponse,
+    StudentBatchRequest,
+    StudentBatchResult,
+    StudentCreate,
+    StudentResponse,
+    StudentUpdate,
+    StudentVerificationUpdate,
+    VerificationStatus,
+)
 
 
 router = APIRouter(
@@ -59,7 +70,22 @@ def _student_response_options():
         selectinload(Student.custom_field_values).selectinload(
             StudentCustomFieldValue.field_definition
         ),
+        selectinload(Student.verified_by),
+        selectinload(Student.printed_by),
     )
+
+
+def _active_student(db: Session, school_id: int, student_uuid: UUID) -> Student:
+    student = db.execute(
+        select(Student).where(
+            Student.uuid == student_uuid,
+            Student.school_id == school_id,
+            Student.is_active.is_(True),
+        )
+    ).scalar_one_or_none()
+    if student is None:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return student
 
 
 # ==========================================================
@@ -219,6 +245,14 @@ async def create_student(
 
     db.add(student)
     replace_student_custom_fields(db, student, validated_custom_fields)
+    db.flush()
+    record_student_audit(
+        db,
+        student=student,
+        actor=current_user,
+        event_type="student_created",
+        new_value={"admission_no": student.admission_no, "full_name": student.full_name},
+    )
     db.commit()
     db.refresh(student)
 
@@ -306,6 +340,15 @@ async def upload_student_photo(
     # ------------------------------------------------------
 
     student.photo_path = saved_photo_path
+    record_student_audit(
+        db,
+        student=student,
+        actor=current_user,
+        event_type="student_photo_replaced" if previous_photo_path else "student_photo_added",
+        field_name="photo_path",
+        old_value=previous_photo_path,
+        new_value=saved_photo_path,
+    )
 
     try:
         db.commit()
@@ -373,6 +416,8 @@ def list_students(
         default=None,
         description="Filter by section",
     ),
+    verification_status: VerificationStatus | None = Query(default=None),
+    printed: bool | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -410,6 +455,11 @@ def list_students(
         query = query.where(
             Student.admission_no == admission_no
         )
+
+    if verification_status is not None:
+        query = query.where(Student.verification_status == verification_status.value)
+    if printed is not None:
+        query = query.where(Student.print_count > 0 if printed else Student.print_count == 0)
 
     # ------------------------------------------------------
     # Filter by academic session
@@ -547,6 +597,8 @@ def list_students_paged(
         default=None,
         description="Filter by student data-entry date, inclusive",
     ),
+    verification_status: VerificationStatus | None = Query(default=None),
+    printed: bool | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -571,6 +623,10 @@ def list_students_paged(
         Student.school_id == school.id,
         Student.is_active.is_(True),
     ]
+    if verification_status is not None:
+        conditions.append(Student.verification_status == verification_status.value)
+    if printed is not None:
+        conditions.append(Student.print_count > 0 if printed else Student.print_count == 0)
 
     if created_from and created_to and created_from > created_to:
         raise HTTPException(
@@ -713,6 +769,186 @@ def list_students_paged(
 
 
 # ==========================================================
+# Lifecycle actions
+# ==========================================================
+
+@router.patch("/{student_uuid}/verification", response_model=StudentResponse)
+def update_student_verification(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    payload: StudentVerificationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(
+        db, current_user, school.id,
+        "Only a school administrator can change verification status",
+    )
+    student = _active_student(db, school.id, student_uuid)
+    note = payload.note.strip() if payload.note else None
+    if payload.status == VerificationStatus.NEEDS_CORRECTION and not note:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A correction note is required when marking Needs Correction",
+        )
+
+    old_status = student.verification_status
+    old_note = student.correction_note
+    student.verification_status = payload.status.value
+    student.correction_note = note if payload.status == VerificationStatus.NEEDS_CORRECTION else None
+    if payload.status == VerificationStatus.VERIFIED:
+        student.verified_at = datetime.now(timezone.utc)
+        student.verified_by_user_id = current_user.id
+    else:
+        student.verified_at = None
+        student.verified_by_user_id = None
+
+    if old_status != student.verification_status:
+        record_student_audit(
+            db, student=student, actor=current_user,
+            event_type="verification_status_changed", field_name="verification_status",
+            old_value=old_status, new_value=student.verification_status, note=note,
+        )
+    if old_note != student.correction_note:
+        record_student_audit(
+            db, student=student, actor=current_user,
+            event_type="correction_note_changed", field_name="correction_note",
+            old_value=old_note, new_value=student.correction_note, note=note,
+        )
+    db.commit()
+    db.refresh(student)
+    return student
+
+
+@router.post("/{student_uuid}/mark-printed", response_model=StudentResponse)
+def mark_student_printed(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_card_data_access(
+        db, current_user, school.id,
+        "Only a school administrator or card operator can mark cards printed",
+    )
+    student = _active_student(db, school.id, student_uuid)
+    if student.verification_status != VerificationStatus.VERIFIED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only verified students can be marked printed",
+        )
+    old_count = student.print_count
+    student.print_count = old_count + 1
+    student.printed_at = datetime.now(timezone.utc)
+    student.printed_by_user_id = current_user.id
+    record_student_audit(
+        db, student=student, actor=current_user,
+        event_type="reprinted" if old_count else "marked_printed",
+        field_name="print_count", old_value=old_count, new_value=student.print_count,
+    )
+    db.commit()
+    db.refresh(student)
+    return student
+
+
+@router.get("/{student_uuid}/history", response_model=list[StudentAuditEventResponse])
+def get_student_history(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(
+        db, current_user, school.id,
+        "Only a school administrator can view student history",
+    )
+    student = _active_student(db, school.id, student_uuid)
+    return db.execute(
+        select(StudentAuditEvent)
+        .options(selectinload(StudentAuditEvent.actor))
+        .where(
+            StudentAuditEvent.school_id == school.id,
+            StudentAuditEvent.student_id == student.id,
+        )
+        .order_by(StudentAuditEvent.created_at.desc(), StudentAuditEvent.id.desc())
+    ).scalars().all()
+
+
+@router.post("/batch-verify", response_model=StudentBatchResult)
+def batch_verify_students(
+    school_uuid: UUID,
+    payload: StudentBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(db, current_user, school.id, "Only a school administrator can verify students")
+    unique_uuids = list(dict.fromkeys(payload.student_uuids))
+    students = db.execute(
+        select(Student).where(
+            Student.school_id == school.id,
+            Student.uuid.in_(unique_uuids),
+            Student.is_active.is_(True),
+        )
+    ).scalars().all()
+    if len(students) != len(unique_uuids):
+        raise HTTPException(status_code=404, detail="One or more students were not found in this school")
+    now = datetime.now(timezone.utc)
+    for student in students:
+        old_status = student.verification_status
+        student.verification_status = VerificationStatus.VERIFIED.value
+        student.correction_note = None
+        student.verified_at = now
+        student.verified_by_user_id = current_user.id
+        record_student_audit(
+            db, student=student, actor=current_user,
+            event_type="verification_status_changed", field_name="verification_status",
+            old_value=old_status, new_value=student.verification_status,
+        )
+    db.commit()
+    return StudentBatchResult(updated_count=len(students), students=students)
+
+
+@router.post("/batch-mark-printed", response_model=StudentBatchResult)
+def batch_mark_students_printed(
+    school_uuid: UUID,
+    payload: StudentBatchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_card_data_access(db, current_user, school.id, "Only an authorized print role can mark cards printed")
+    unique_uuids = list(dict.fromkeys(payload.student_uuids))
+    students = db.execute(
+        select(Student).where(
+            Student.school_id == school.id,
+            Student.uuid.in_(unique_uuids),
+            Student.is_active.is_(True),
+        )
+    ).scalars().all()
+    if len(students) != len(unique_uuids):
+        raise HTTPException(status_code=404, detail="One or more students were not found in this school")
+    if any(student.verification_status != VerificationStatus.VERIFIED.value for student in students):
+        raise HTTPException(status_code=409, detail="Only verified students can be marked printed")
+    now = datetime.now(timezone.utc)
+    for student in students:
+        old_count = student.print_count
+        student.print_count = old_count + 1
+        student.printed_at = now
+        student.printed_by_user_id = current_user.id
+        record_student_audit(
+            db, student=student, actor=current_user,
+            event_type="reprinted" if old_count else "marked_printed",
+            field_name="print_count", old_value=old_count, new_value=student.print_count,
+        )
+    db.commit()
+    return StudentBatchResult(updated_count=len(students), students=students)
+
+
+# ==========================================================
 # Get Student
 # ==========================================================
 
@@ -801,6 +1037,16 @@ def update_student(
         )
 
     fields_set = student_data.model_fields_set
+    tracked_fields = {
+        "admission_no", "roll_no", "stream", "full_name", "father_name",
+        "mother_name", "dob", "gender", "blood_group", "mobile", "aadhaar",
+        "address", "photo_path", "is_active", "session_id", "class_id", "section_id",
+    }
+    before_values = {name: getattr(student, name) for name in tracked_fields}
+    before_custom_fields = {
+        item.field_definition.field_key: item.value
+        for item in student.custom_field_values
+    }
 
     validated_custom_fields = None
     if "custom_fields" in fields_set:
@@ -1019,6 +1265,41 @@ def update_student(
     if validated_custom_fields is not None:
         replace_student_custom_fields(db, student, validated_custom_fields)
 
+    changes = {
+        name: (old_value, getattr(student, name))
+        for name, old_value in before_values.items()
+        if old_value != getattr(student, name)
+    }
+    if validated_custom_fields is not None:
+        after_custom_fields = {
+            definition.field_key: value
+            for definition, value in validated_custom_fields
+        }
+        for key in before_custom_fields.keys() | after_custom_fields.keys():
+            if before_custom_fields.get(key) != after_custom_fields.get(key):
+                changes[f"custom_fields.{key}"] = (
+                    before_custom_fields.get(key), after_custom_fields.get(key)
+                )
+    photo_change = changes.pop("photo_path", None)
+    record_student_field_changes(
+        db, student=student, actor=current_user, changes=changes
+    )
+    if photo_change is not None:
+        old_photo, new_photo = photo_change
+        record_student_audit(
+            db,
+            student=student,
+            actor=current_user,
+            event_type=(
+                "student_photo_removed"
+                if not new_photo
+                else "student_photo_replaced" if old_photo else "student_photo_added"
+            ),
+            field_name="photo_path",
+            old_value=old_photo,
+            new_value=new_photo,
+        )
+
     # ------------------------------------------------------
     # Save changes
     # ------------------------------------------------------
@@ -1079,6 +1360,11 @@ def delete_student(
     # ------------------------------------------------------
 
     student.is_active = False
+
+    record_student_audit(
+        db, student=student, actor=current_user, event_type="student_deactivated",
+        field_name="is_active", old_value=True, new_value=False,
+    )
 
     db.commit()
 

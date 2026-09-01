@@ -22,6 +22,7 @@ from app.core.student_imports import parse_student_upload
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
+from app.models.student import Student
 from app.schemas.student_import import StudentImportMapping, StudentImportMappingItem
 from app.schemas.student_import import (
     StudentImportCommitRequest,
@@ -314,6 +315,11 @@ def test_commit_adds_all_rows_then_flushes_and_commits_once(monkeypatch):
 
         def flush(self):
             self.flush_count += 1
+            next_id = 1
+            for value in self.added:
+                if isinstance(value, Student) and value.id is None:
+                    value.id = next_id
+                    next_id += 1
 
         def commit(self):
             self.commit_count += 1
@@ -375,7 +381,7 @@ def test_commit_adds_all_rows_then_flushes_and_commits_once(monkeypatch):
         current_user=type("User", (), {"id": 5})(),
     )
 
-    assert len(db.added) == 2
+    assert len(db.added) == 4
     assert db.flush_count == 1
     assert db.commit_count == 1
     assert db.rollback_count == 0
