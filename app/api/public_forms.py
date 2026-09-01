@@ -214,6 +214,7 @@ def get_public_form(token: str, request: Request, db: Session = Depends(get_db))
         instructions=form.instructions,
         fields=_public_fields(db, form),
         allow_photo=form.allow_photo,
+        photo_required=form.allow_photo and form.require_all_fields,
         supported_photo_types=list(ALLOWED_IMAGE_TYPES),
         max_photo_size_bytes=MAX_STUDENT_PHOTO_SIZE,
         success_message=form.success_message,
@@ -243,6 +244,9 @@ async def submit_public_form(
         payload = PublicStudentInput.model_validate_json(student_data_json)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="Invalid student data") from exc
+
+    if form.require_all_fields and form.allow_photo and photo is None:
+        raise HTTPException(status_code=422, detail="Photo is required")
 
     selected_system = set(form.selected_system_fields)
     supplied_system = payload.model_fields_set - {"custom_fields"}

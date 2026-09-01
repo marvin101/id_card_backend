@@ -101,6 +101,7 @@ class PublicFormView(BaseModel):
     instructions: str | None
     fields: list[PublicField]
     allow_photo: bool
+    photo_required: bool
     supported_photo_types: list[str]
     max_photo_size_bytes: int
     success_message: str | None

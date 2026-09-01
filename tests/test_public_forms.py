@@ -18,6 +18,7 @@ from app.api.public_forms import (
     _public_fields,
     management_router,
     public_router,
+    get_public_form,
     submit_public_form,
 )
 from app.core.student_audit import record_student_audit
@@ -184,11 +185,11 @@ def _request():
     return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "client": ("127.0.0.1", 1234)})
 
 
-def _submission_form(*, allow_photo=False):
+def _submission_form(*, allow_photo=False, require_all_fields=False):
     return SimpleNamespace(
         id=1, school_id=10, is_active=True, expires_at=None,
         selected_system_fields=REQUIRED, selected_custom_field_uuids=[],
-        require_all_fields=False, allow_photo=allow_photo, success_message=None,
+        require_all_fields=require_all_fields, allow_photo=allow_photo, success_message=None,
     )
 
 
@@ -252,6 +253,43 @@ def test_public_submission_rejects_photo_when_disabled(monkeypatch):
         asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
 
 
+def test_required_enabled_photo_cannot_be_omitted(monkeypatch):
+    db = _SubmissionDatabase(
+        [_submission_form(allow_photo=True, require_all_fields=True)]
+    )
+    monkeypatch.setattr(
+        "app.api.public_forms.enforce_public_form_rate_limit",
+        lambda *args, **kwargs: None,
+    )
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(
+            submit_public_form("token", _request(), _submission_json(), None, db)
+        )
+    assert raised.value.status_code == 422
+    assert raised.value.detail == "Photo is required"
+
+
+def test_optional_enabled_photo_can_be_omitted(monkeypatch):
+    payload_json = _submission_json()
+    session, school_class, section = _academic_records(payload_json)
+    db = _SubmissionDatabase(
+        [_submission_form(allow_photo=True)],
+        [session],
+        [school_class],
+        [section],
+        [],
+    )
+    monkeypatch.setattr(
+        "app.api.public_forms.enforce_public_form_rate_limit",
+        lambda *args, **kwargs: None,
+    )
+    response = asyncio.run(
+        submit_public_form("token", _request(), payload_json, None, db)
+    )
+    assert response.submitted is True
+    assert db.committed is True
+
+
 def test_public_photo_success_uses_managed_student_path(monkeypatch):
     payload_json = _submission_json()
     session, school_class, section = _academic_records(payload_json)
@@ -262,6 +300,66 @@ def test_public_photo_success_uses_managed_student_path(monkeypatch):
     asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
     student = next(item for item in db.added if isinstance(item, Student))
     assert student.photo_path == f"students/{student.uuid}/photo_test.png"
+
+
+def test_required_enabled_photo_submission_succeeds(monkeypatch):
+    payload_json = _submission_json()
+    session, school_class, section = _academic_records(payload_json)
+    db = _SubmissionDatabase(
+        [_submission_form(allow_photo=True, require_all_fields=True)],
+        [session],
+        [school_class],
+        [section],
+        [],
+    )
+    photo = UploadFile(
+        filename="photo.png",
+        file=io.BytesIO(b"image"),
+        headers=Headers({"content-type": "image/png"}),
+    )
+    monkeypatch.setattr(
+        "app.api.public_forms.enforce_public_form_rate_limit",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.api.public_forms.save_student_photo",
+        lambda student_uuid, content, content_type: (
+            f"students/{student_uuid}/photo_test.png"
+        ),
+    )
+    response = asyncio.run(
+        submit_public_form("token", _request(), payload_json, photo, db)
+    )
+    assert response.submitted is True
+    assert db.committed is True
+
+
+@pytest.mark.parametrize(
+    ("require_all_fields", "allow_photo", "expected"),
+    [(True, True, True), (True, False, False), (False, True, False)],
+)
+def test_public_get_exposes_photo_required_state(
+    require_all_fields, allow_photo, expected, monkeypatch
+):
+    school = SimpleNamespace(
+        is_active=True,
+        school_name="Campus School",
+        logo_path=None,
+    )
+    form = _submission_form(
+        allow_photo=allow_photo,
+        require_all_fields=require_all_fields,
+    )
+    form.school = school
+    form.title = "Student details"
+    form.instructions = None
+    db = _Database([form], [], [])
+    monkeypatch.setattr(
+        "app.api.public_forms.enforce_public_form_rate_limit",
+        lambda *args, **kwargs: None,
+    )
+    response = get_public_form("token", _request(), db)
+    assert response.photo_required is expected
 
 
 def test_storage_failure_rolls_back_without_committing_student(monkeypatch):
