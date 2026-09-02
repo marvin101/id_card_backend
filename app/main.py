@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.users import router as users_router
 from app.core.database import get_db
 from app.core.config import settings
+from app.version import __version__
 from app.api.auth import router as auth_router
 from app.api.schools import router as schools_router
 from app.api.academic_sessions import router as academic_sessions_router
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 app = FastAPI(
-    title="School ID Card API",
-    version="1.0.0",
+    title="CampusID API",
+    version=__version__,
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -71,7 +72,7 @@ app.include_router(public_forms_router)
 def root():
     return {
         "status": "ok",
-        "service": "ID Card Manager API",
+        "service": "CampusID API",
         "docs": "/docs",
         "health": "/health",
     }

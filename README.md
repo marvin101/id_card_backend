@@ -1,94 +1,171 @@
-# ID-Card Manager — FastAPI Backend
+# CampusID — FastAPI Backend
 
-FastAPI service for the ID-Card Manager. It owns authentication, school-scoped authorization, academic data, student/card records, Card Designer templates, and student photo storage integration.
+CampusID's FastAPI service is the security and data boundary for school-scoped identity-card workflows. It provides authentication, authorization, academic and student records, Public Forms, bulk ingestion, Card Designer templates, audit history, and storage integration for the Flutter client.
+
+## Current release
+
+- **CampusID v0.7.0** — the Excel Grid release.
+- Includes the production-smoke-tested grid API, Public Forms from the 0.6.x milestone, student lifecycle and audit controls, bulk imports, dynamic student fields, and the current card/PDF workflow.
+- Remains pre-1.0 while Designer v2, digital identity, advanced print production, and other roadmap modules are still in development.
 
 ## Architecture
 
 ```text
-Flutter Web (Vercel)
-        |
-        | HTTPS / JSON + Bearer token
-        v
-FastAPI (Render)
-    |             |
-    v             v
-PostgreSQL    Supabase Storage
+Flutter Web
+   (Vercel)
+       |
+       | HTTPS / JSON + JWT bearer token
+       v
+FastAPI API
+   (Render)
+       |
+       +-------------------------+
+       |                         |
+       v                         v
+Supabase PostgreSQL       Supabase Storage
+schools, users, students,  school logos, student photos,
+forms, templates, audits   and temporary bulk-photo objects
 ```
 
-Source repository: `marvin101/id_card_backend`
+The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage holds persistent media; Render's local filesystem is not production persistence.
 
-The application uses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage is used for persistent student photos; Render's local filesystem must not be treated as persistent production storage.
+## Core capabilities
 
-## Current capabilities
-
-- JWT authentication with Argon2 password hashing
-- User registration and authenticated profile lookup
-- Platform-level and school-level roles
-- Active, pending, revoked, and multi-school assignment handling
-- School, academic session, class, and section APIs
-- Student creation, search, filtering, updates, photo upload, and deletion controls
-- Per-school card-template retrieval and administration
-- CORS configuration for local Flutter development and the Vercel frontend
-- API and database health endpoints
-
-Public registration currently creates a user without granting school access. An administrator must assign and activate access before the user can work in a school. The planned public landing/registration UI is not part of this backend repository.
+- JWT authentication with Argon2 password hashing and configurable token expiry
+- Platform Admin, School Admin, Card Operator, Teacher, and Staff authorization
+- Active, pending, revoked, and multi-school access assignments
+- Registration against an active school with a pending access-request workflow
+- School profile and logo management
+- Academic sessions, classes, and sections
+- School-scoped student CRUD, search, filtering, and photo management
+- Dynamic per-school student fields
+- Excel student import with template, upload, preview, and commit stages
+- Bulk student photo upload, matching preview, promotion, and cleanup
+- Pending / Needs Correction / Verified lifecycle, print/reprint tracking, and audit history
+- Public Forms with school branding, configured fields, optional or required photo, and anonymous submission
+- Excel Grid paging, filtering, search, inline bulk updates, conflict detection, and structured validation errors
+- Per-school Card Designer template storage
+- CORS, request-size controls, authentication/Public Form throttling, and health endpoints
 
 ## Authorization model
 
-Authorization is enforced in FastAPI even when the Flutter UI hides an action.
+FastAPI authorizes every protected request. Frontend visibility is only a usability layer.
 
 | Role | Backend scope |
 | --- | --- |
-| Platform Admin | All active schools; creates schools and manages elevated assignments and all application workflows |
-| School Admin | Assigned schools; manages school structure, students/cards, templates, printing data, and ordinary teacher/staff assignments |
-| Card Operator | Assigned schools; reads/adds/updates student card data and uploads photos only |
-| Teacher / Staff | Assigned-school supporting access; no student/card-data operations under the current policy |
+| Platform Admin | Platform-wide access to active schools, elevated role assignment, school administration, and all application workflows |
+| School Admin | Assigned school(s); school structure/profile, ordinary Teacher/Staff assignments, students, lifecycle/audit, printing, templates, Public Forms, and imports |
+| Card Operator | Assigned school(s); student card data, photos, imports, grid editing, and printing; no school configuration or student deletion |
+| Teacher / Staff | Assigned-school supporting access; currently excluded from student/card-data operations |
 
-Additional rules:
+School-scope rules:
 
-- School access requires an active assignment for ordinary users.
-- Multiple active assignments are supported and remain independently scoped.
-- Pending or revoked assignments do not authorize school data.
-- Student deletion remains an administrator operation.
-- Card-template reads require school access; writes require a School Admin or Platform Admin.
-- Elevated roles such as School Admin and Card Operator can be assigned only by a Platform Admin.
-- The legacy school role value `admin` is accepted as a compatibility alias for `school_admin` where implemented.
+- Ordinary users require an assignment to the requested school; multiple assignments remain independently scoped.
+- Pending or revoked access does not authorize school data.
+- Platform Admins bypass school membership checks.
+- School Admins may manage ordinary Teacher/Staff roles only. Platform Admin authority is required for elevated assignments.
+- Student deletion, school configuration, and template writes require School Admin or Platform Admin authority.
+- The legacy school role value `admin` is accepted as a compatibility alias where the school-admin path explicitly allows it.
+
+## API groups
+
+| Prefix | Responsibility |
+| --- | --- |
+| `/auth` | Login and bearer-token issuance |
+| `/users` | Registration, current profile, users, access requests, and school assignments |
+| `/schools` | School discovery, administration, profile, and logo operations |
+| `/schools/{school_uuid}/academic-sessions` | Academic sessions |
+| `/schools/{school_uuid}/classes` | Classes |
+| `/schools/{school_uuid}/classes/{class_uuid}/sections` | Sections |
+| `/schools/{school_uuid}/students` | Student CRUD, filters, photos, verification, print tracking, batch lifecycle actions, and history |
+| `/schools/{school_uuid}/student-fields` | Dynamic student-field definitions and ordering |
+| `/schools/{school_uuid}/students/imports` | Excel template, upload, preview, and commit |
+| `/schools/{school_uuid}/student-photos/bulk` | Bulk-photo upload, preview, and commit |
+| `/schools/{school_uuid}/public-form` | Authenticated Public Form configuration and link regeneration |
+| `/public/forms/{token}` | Anonymous Public Form read; submissions use `/public/forms/{token}/submissions` |
+| `/schools/{school_uuid}/students/grid` | Bounded grid read and atomic bulk patch |
+| `/schools/{school_uuid}/card-template` | Per-school Card Designer template |
+
+Use `/docs` or `/openapi.json` for exact methods, query parameters, request bodies, and response schemas.
+
+## Student lifecycle and audit
+
+`verification_status` is one of **Pending**, **Needs Correction**, or **Verified**. Verification metadata and correction notes are managed through dedicated lifecycle operations rather than ordinary student edits.
+
+Printing is a separate dimension: a student may have print timestamps, the responsible user, and a print count regardless of the verification label. Individual and batch endpoints record printing/reprinting without collapsing it into verification state.
+
+Student history records meaningful field, lifecycle, photo, import, print, and Public Form events. Audit entries are school scoped, and update paths record changes only when values actually change.
+
+## Public Forms
+
+- Authenticated administrators configure school branding, enabled fields, custom fields, photo policy, form state, and success text.
+- Anonymous GET and POST operations are addressed by a cryptographically generated, non-enumerable token.
+- A submission creates a **Pending** student in the form's school.
+- The public payload cannot set verification, correction, print, audit, or other internal fields.
+- The backend validates school-owned academic choices, selected custom fields, required fields, admission-number duplication, file type/size, and request size.
+- Photos are uploaded through the backend only and stored through the managed storage layer.
+- The audit source is recorded as `Submitted through Public Form`.
+- Token reads and submissions have separate configurable rate limits.
+
+## Bulk import and storage
+
+The Excel workflow provides a generated template, accepts an upload, returns a validation preview, and commits accepted rows only after confirmation. It validates academic relationships, required fields, duplicates, and configured custom fields.
+
+Bulk-photo uploads are staged as temporary objects in Supabase Storage. PostgreSQL manifests contain metadata only—never base64 content or raw image bytes. Preview matches staged files to school-scoped students; commit promotes accepted images to managed student-photo paths and updates records. Failure, expiry, and commit paths clean temporary or replaced objects as appropriate.
+
+## Excel Grid API
+
+`GET /schools/{school_uuid}/students/grid` supports offset paging, search, and academic session/class/section filters. The page limit defaults to 100 and is bounded to 200. Responses include active custom-field definitions and school-owned academic lookup data.
+
+`PATCH /schools/{school_uuid}/students/grid` accepts multiple row edits and:
+
+- permits only a defined whitelist of student fields plus active, school-owned custom fields;
+- validates academic dropdown relationships and uniqueness constraints;
+- compares each supplied `expected_updated_at` with the current row to detect optimistic-concurrency conflicts;
+- returns structured errors containing `student_uuid`, `field`, and `message`;
+- validates the whole request before committing, so a failed row prevents all rows from saving;
+- rolls back on conflicts or database errors; and
+- updates timestamps and writes audit events only for values that actually changed.
 
 ## Technology
 
-- Python and FastAPI
+- Python 3.11+
+- FastAPI and Uvicorn
 - Pydantic Settings
-- SQLAlchemy 2
-- PostgreSQL via Psycopg 3
-- Alembic migrations
-- PyJWT
-- Argon2 password hashing
-- Supabase Python client
-- Pillow and multipart uploads
-- Uvicorn
+- SQLAlchemy 2 and Psycopg 3
+- PostgreSQL and Alembic
+- PyJWT and Argon2
+- Supabase Python client and Supabase Storage
+- Pillow, multipart uploads, and standard-library XLSX/ZIP/XML processing
+- pytest and HTTPX for focused tests
 
-## Active project structure
+## Project structure
 
 ```text
 app/
-  api/           route modules
-  core/          configuration, database, security, authorization, storage
-  models/        SQLAlchemy models
-  schemas/       request and response models
-  main.py        FastAPI application and router registration
-migrations/      Alembic environment and revisions
-uploads/         local development upload directory; not production persistence
-alembic.ini      migration configuration
-requirements.txt pinned Python dependencies
+  api/                 FastAPI route modules
+  core/                config, database, security, authorization, storage, imports, audit
+  models/              SQLAlchemy models
+  schemas/             request and response models
+  main.py              application creation, middleware, routers, health endpoints
+  version.py           authoritative backend product version
+migrations/
+  versions/            Alembic revisions
+tests/                 focused backend test suite
+uploads/               local-development uploads; not production persistence
+.env.example           environment-variable template
+alembic.ini            Alembic configuration
+requirements.txt       runtime dependencies
+requirements-dev.txt   test/development dependencies
 ```
 
-Some generated cross-platform client directories may exist in the repository, but the deployed backend application is the FastAPI code under `app/`.
+Only `app/`, `migrations/`, and supporting backend files are part of the deployed service; generated or legacy cross-platform directories are not backend runtime code.
 
 ## Prerequisites
 
 - Python 3.11 or newer
 - PostgreSQL database
-- Supabase project and private server-side storage key
+- Supabase project with a private server-side Storage key
 
 ## Local setup
 
@@ -98,100 +175,86 @@ cd id_card_backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env
 ```
 
-Complete `.env` locally. Never commit it or paste its values into issues, logs, frontend builds, or documentation.
+Complete `.env` locally. Never commit it or expose its values in logs, issues, frontend builds, or documentation.
 
-Required configuration names:
+## Configuration
+
+The authoritative settings are in `app/core/config.py`. Environment names currently read by the application are:
 
 | Variable | Purpose |
 | --- | --- |
 | `DB_HOST` | PostgreSQL host |
-| `DB_PORT` | PostgreSQL port, normally `5432` |
+| `DB_PORT` | PostgreSQL port |
 | `DB_NAME` | Database name |
 | `DB_USER` | Database user |
 | `DB_PASSWORD` | Database password |
-| `SECRET_KEY` | Long random JWT signing secret |
-| `ALGORITHM` | JWT algorithm; current default is `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Bearer access-token lifetime in minutes; defaults to `30` |
+| `SECRET_KEY` | JWT signing secret |
+| `ALGORITHM` | JWT algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Bearer-token lifetime |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Private server-side Supabase key |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
-| `AUTH_RATE_LIMIT_ENABLED` | Enables the process-local login and registration limiter; defaults to `true` |
-| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Sliding-window duration; defaults to `60` |
-| `LOGIN_RATE_LIMIT_REQUESTS` | Login attempts allowed per client address and window; defaults to `10` |
-| `REGISTRATION_RATE_LIMIT_REQUESTS` | Registration attempts allowed per client address and window; defaults to `5` |
-| `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Number of controlled reverse-proxy hops used to select the client address from the right of `X-Forwarded-For`; defaults to `0` |
+| `AUTH_RATE_LIMIT_ENABLED` | Enables process-local authentication and Public Form throttling |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Sliding-window duration |
+| `LOGIN_RATE_LIMIT_REQUESTS` | Login requests allowed per client/window |
+| `REGISTRATION_RATE_LIMIT_REQUESTS` | Registration requests allowed per client/window |
+| `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS` | Public Form reads allowed per client/window |
+| `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS` | Public Form submissions allowed per client/window |
+| `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous submission request size |
+| `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Trusted reverse-proxy hops used to resolve the client address |
 
-`SUPABASE_URL` and `SUPABASE_SECRET_KEY` are required by `app/core/config.py`; add their names to a local `.env` even if an older `.env.example` does not yet list them.
+These names are case-insensitive through Pydantic Settings. Keep all values server-side.
 
 ## Database migrations
 
-Apply all migrations before starting a new environment:
+Apply the current schema:
 
 ```powershell
-alembic upgrade head
+python -m alembic upgrade head
 ```
 
-Create a migration only after reviewing model changes:
+Create and inspect a migration when models intentionally change:
 
 ```powershell
-alembic revision --autogenerate -m "describe_change"
+python -m alembic revision --autogenerate -m "describe_change"
 ```
 
-Always inspect autogenerated migrations before applying or committing them.
+Production environments must be upgraded before deploying application code that depends on new tables or columns. Review generated SQL and backups/rollback plans before applying production migrations.
 
 ## Run locally
 
 ```powershell
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload
 ```
 
-Useful endpoints:
+## Health and API docs
 
-- Health: `http://127.0.0.1:8000/health`
-- Database health: `http://127.0.0.1:8000/health/check`
+- Liveness: `http://127.0.0.1:8000/health`
+- Database readiness: `http://127.0.0.1:8000/health/check`
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - OpenAPI schema: `http://127.0.0.1:8000/openapi.json`
 
-`/health` is a liveness endpoint and does not query PostgreSQL.
-`/health/check` is a readiness endpoint and returns HTTP `503` with a generic
-disconnected response when PostgreSQL cannot be reached.
+`/health` does not query PostgreSQL. `/health/check` returns HTTP 503 with a generic disconnected response when the database is unavailable.
 
-## API groups
+## Testing
 
-| Prefix | Responsibility |
-| --- | --- |
-| `/auth` | Login and tokens |
-| `/users` | Registration, profiles, users, and school assignments |
-| `/schools` | School discovery and administration |
-| `/schools/{school_uuid}/academic-sessions` | Academic sessions |
-| `/schools/{school_uuid}/classes` | Classes |
-| `/schools/{school_uuid}/classes/{class_uuid}/sections` | Sections |
-| `/schools/{school_uuid}/students` | Student/card data and photo operations |
-| `/schools/{school_uuid}/card-template` | Per-school Card Designer configuration |
-
-Use the generated Swagger documentation for the exact request bodies, query parameters, and responses.
-
-## Verification
-
-For backend changes, at minimum:
+The repository includes focused pytest coverage for authorization matrices, endpoint integration, authentication configuration/rate limiting, school access requests and profiles, dynamic student fields, Excel imports, bulk-photo storage, student photos, lifecycle/audit behavior, Public Forms, and the Excel Grid.
 
 ```powershell
+python -m pytest
 python -m compileall app
-alembic current
+python -m alembic heads
 ```
 
-Then start the service and verify `/health`, `/health/check`, and the affected endpoints. Authorization work should be tested with direct API calls across Platform Admin, School Admin, Card Operator, Teacher/Staff, unassigned, pending, revoked, and other-school cases. Do not rely on Flutter button visibility as proof of backend security.
+Tests use isolated fixtures and do not replace production smoke testing across each role and school boundary.
 
-The repository does not currently include a complete automated backend test suite. Add focused `pytest` coverage when extending authorization or data-sensitive behavior.
+## Production deployment
 
-## Render deployment
-
-The production service runs on Render with environment values configured in the Render dashboard.
-
-Start command:
+The production service runs on Render. Configure environment values in the Render dashboard and use:
 
 ```text
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
@@ -199,22 +262,33 @@ uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
 Current production API: `https://id-card-backend-vcz5.onrender.com`
 
-For the normal Render proxy topology, set
-`AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS=1`. Confirm the actual proxy chain before
-raising this value. The limiter is intentionally in memory and enforced per
-application process. If the service is scaled to multiple workers or instances,
-enforce the equivalent policy at Render's edge or replace it with a shared
-limiter; it can be disabled with `AUTH_RATE_LIMIT_ENABLED=false` to avoid
-double-throttling.
-
 Before deployment:
 
-1. Review and apply database migrations deliberately.
-2. Configure all required environment variables in Render without exposing their values.
+1. Review and apply required Alembic migrations to the target database.
+2. Configure secrets and all required environment variables in Render.
 3. Confirm the Vercel production origin is allowed by CORS.
-4. Deploy, then verify `/health`, `/health/check`, authentication, school scoping, uploads, and Card Designer authorization.
+4. Confirm Supabase Storage credentials and bucket policies support server-side logo/photo operations.
+5. Verify health, authentication, school scoping, Public Forms, imports, uploads, grid saves, templates, and PDF-facing data after deployment.
+
+The built-in limiter is process local. For the normal Render proxy topology, `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS=1` may be appropriate, but the deployed proxy chain must be verified. Multi-worker or multi-instance deployments need equivalent edge enforcement or a shared limiter.
+
+## Versioning
+
+CampusID follows Semantic Versioning: `MAJOR.MINOR.PATCH`. Backend and Flutter currently share one product version. The API's authoritative version is `app/version.py`, and FastAPI exposes it in OpenAPI metadata.
+
+The current release is `0.7.0`: `0.6.x` represented Public Forms and `0.7.0` adds the Excel Grid milestone. Pre-1.0 minor releases may still introduce substantial product changes.
+
+## Roadmap
+
+- Designer v2
+- QR/barcode and digital identity
+- Advanced print production and Print Basket
+- Teacher and non-teaching staff workflows
+- School collaboration
+- Photo Studio
+- White-label and lanyard workflows
+- AI OCR (deferred)
 
 ## Related client
 
-Flutter source: `https://github.com/marvin101/idcard_flutter`
-
+Flutter client: `https://github.com/marvin101/idcard_flutter`
