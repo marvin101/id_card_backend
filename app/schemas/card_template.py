@@ -46,10 +46,15 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("canvas must be an object")
     width = _finite_number(canvas.get("width"), "canvas.width")
     height = _finite_number(canvas.get("height"), "canvas.height")
-    if width <= 0 or height <= 0 or width > 2000 or height > 2000:
-        raise ValueError("canvas dimensions must be positive and at most 2000")
+    if width <= 10 or height <= 10 or width > 2000 or height > 2000:
+        raise ValueError("canvas dimensions must be greater than 10 and at most 2000 millimetres")
     if canvas.get("orientation") not in {"portrait", "landscape"}:
         raise ValueError("canvas.orientation must be portrait or landscape")
+    expected_orientation = "landscape" if width >= height else "portrait"
+    if canvas["orientation"] != expected_orientation:
+        raise ValueError(
+            f"canvas.orientation must be {expected_orientation} for these dimensions"
+        )
     background = canvas.get("background_color", "#FFFFFF")
     if not isinstance(background, str) or not _COLOR.fullmatch(background):
         raise ValueError("canvas.background_color must be a hex color")

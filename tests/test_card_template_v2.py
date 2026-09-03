@@ -63,6 +63,31 @@ def test_v2_template_saves_and_round_trips():
     assert payload.model_dump()["design"] == document
 
 
+def test_non_default_canvas_size_is_accepted():
+    document = _document()
+    document["canvas"].update(
+        {"width": 100.0, "height": 70.0, "orientation": "landscape"}
+    )
+    assert CardTemplateUpdate(name="Custom", design=document).design["canvas"]["width"] == 100.0
+
+
+@pytest.mark.parametrize(("width", "height"), [(0, 53.98), (-1, 53.98), (10, 53.98)])
+def test_invalid_canvas_size_is_rejected(width, height):
+    document = _document()
+    document["canvas"].update({"width": width, "height": height})
+    with pytest.raises(ValidationError, match="greater than 10"):
+        CardTemplateUpdate(name="Invalid", design=document)
+
+
+def test_canvas_orientation_must_match_dimensions():
+    document = _document()
+    document["canvas"].update(
+        {"width": 53.98, "height": 85.6, "orientation": "landscape"}
+    )
+    with pytest.raises(ValidationError, match="must be portrait"):
+        CardTemplateUpdate(name="Invalid orientation", design=document)
+
+
 @pytest.mark.parametrize("version", [0, 3, "2"])
 def test_invalid_schema_version_is_rejected(version):
     document = _document()
