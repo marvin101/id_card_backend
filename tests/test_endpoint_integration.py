@@ -86,6 +86,9 @@ class _EndpointSession:
     def commit(self):
         self.commits += 1
 
+    def refresh(self, _value):
+        pass
+
 
 def _user(*, username="operator", active=True):
     return SimpleNamespace(
@@ -259,3 +262,85 @@ def test_access_for_another_school_does_not_authorize_template_read():
         response = client.get(f"/schools/{requested_school.uuid}/card-template")
 
     assert response.status_code == 403
+
+
+def test_card_template_put_updates_one_school_template_and_returns_flutter_shape():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id,
+        school_id=school.id,
+        role="school_admin",
+    )
+    original_design = {"version": 1, "school_title": "Original"}
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Original",
+        design=original_design,
+        updated_at=datetime.now(timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user,
+        school=school,
+        access=access,
+        template=template,
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    replacement = {"version": 1, "school_title": "Replacement"}
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={"name": "  Authoritative name  ", "design": replacement},
+        )
+
+    assert response.status_code == 200
+    assert set(response.json()) == {"uuid", "name", "design", "updated_at"}
+    assert response.json()["name"] == "Authoritative name"
+    assert response.json()["design"] == replacement
+    assert template.name == "Authoritative name"
+    assert template.design == replacement
+    assert session.template is template
+    assert session.commits == 1
+
+
+def test_card_template_validation_failure_leaves_previous_record_unchanged():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id,
+        school_id=school.id,
+        role="school_admin",
+    )
+    original_design = {"version": 1, "school_title": "Original"}
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Original",
+        design=original_design,
+        updated_at=datetime.now(timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user,
+        school=school,
+        access=access,
+        template=template,
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Invalid replacement",
+                "design": {"schema_version": 2, "elements": []},
+            },
+        )
+
+    assert response.status_code == 422
+    assert template.name == "Original"
+    assert template.design is original_design
+    assert session.commits == 0
