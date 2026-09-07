@@ -6,7 +6,7 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 
 - **CampusID v0.7.0** — the Excel Grid release.
 - Includes the production-smoke-tested grid API, Public Forms from the 0.6.x milestone, student lifecycle and audit controls, bulk imports, dynamic student fields, and the current card/PDF workflow.
-- Remains pre-1.0 while Designer v2, digital identity, advanced print production, and other roadmap modules are still in development.
+- Remains pre-1.0 while Designer v2 continues to mature and digital identity, advanced print production, and other roadmap modules are still in development.
 
 ## Architecture
 
@@ -87,6 +87,26 @@ School-scope rules:
 | `/schools/{school_uuid}/card-template` | Per-school Card Designer template |
 
 Use `/docs` or `/openapi.json` for exact methods, query parameters, request bodies, and response schemas.
+
+## Designer v2 API contract
+
+The card-template endpoint stores one template per school. The database uniqueness constraint enforces that relationship, and the same `/schools/{school_uuid}/card-template` resource is used for reads and upsert-style saves.
+
+### Validation
+
+For schema v2, request validation enforces explicit version handling; canvas dimensions and orientation consistency; a maximum of 250 elements; unique, nonblank element IDs; supported element types; finite geometry; and the documented coordinate, size, rotation, and z-index ranges. It also validates hex colours; known style, data, and settings fields; canonical custom-field UUID strings; and the accepted student, academic, school, and principal bindings. Template names are trimmed before the 1–120 character limit is applied.
+
+The principal numeric limits are: canvas width/height greater than 10 mm and at most 2000 mm; element `x`/`y` from 0 to 2000; positive width/height at most 2000; rotation from -360 to 360 degrees; and integer z-index with absolute value at most 10000. Element bounds may extend beyond the canvas so the client's Keep positions strategy can preserve geometry.
+
+### Compatibility and persistence
+
+Schema v2 is strictly validated. A missing version and explicit v1 remain supported as legacy documents, while explicit unknown versions are rejected. Unknown extension keys are preserved for forward compatibility; validation constrains recognized fields without rewriting the submitted document.
+
+Validation completes before endpoint persistence. A rejected request therefore leaves the previous template unchanged. A successful `PUT` commits and refreshes the row, then returns the authoritative stored representation expected by Flutter. Existing legacy templates remain readable. See [Designer v2 document](docs/DESIGNER_V2.md) for the document shape and binding model.
+
+### Concurrency
+
+Template responses include `updated_at`, but the endpoint does not yet enforce an ETag, revision, or optimistic-concurrency check. Concurrent editors can overwrite one another; the current behavior is last-write-wins.
 
 ## Student lifecycle and audit
 
@@ -280,7 +300,7 @@ The current release is `0.7.0`: `0.6.x` represented Public Forms and `0.7.0` add
 
 ## Roadmap
 
-- Designer v2
+- Designer v2 concurrency and remaining contract hardening
 - QR/barcode and digital identity
 - Advanced print production and Print Basket
 - Teacher and non-teaching staff workflows
