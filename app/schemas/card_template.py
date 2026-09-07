@@ -17,11 +17,36 @@ SUPPORTED_ELEMENT_TYPES = {
     "line",
 }
 SUPPORTED_BINDING_FIELDS = {
-    "full_name", "admission_no", "roll_no", "stream", "father_name",
-    "mother_name", "dob", "gender", "blood_group", "mobile", "aadhaar",
-    "address", "session", "class", "section",
+    "full_name",
+    "admission_no",
+    "roll_no",
+    "stream",
+    "father_name",
+    "mother_name",
+    "dob",
+    "gender",
+    "blood_group",
+    "mobile",
+    "aadhaar",
+    "address",
+    "session",
+    "class",
+    "section",
+    "school_name",
+    "school_address",
+    "school_code",
+    "school_phone",
+    "school_email",
+    "school_website",
+    "school_city",
+    "school_district",
+    "school_state",
+    "school_country",
+    "school_postal_code",
+    "principal_name",
 }
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
+_TEXT_DATA_KEYS = {"text", "prefix", "suffix", "fallback", "label"}
 
 
 def _finite_number(value: Any, label: str) -> float:
@@ -30,6 +55,17 @@ def _finite_number(value: Any, label: str) -> float:
     number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"{label} must be finite")
+    return number
+
+
+def _optional_finite_number(
+    values: dict[str, Any], key: str, label: str, *, minimum: float | None = None
+) -> float | None:
+    if key not in values:
+        return None
+    number = _finite_number(values[key], label)
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{label} must be at least {minimum:g}")
     return number
 
 
@@ -58,6 +94,9 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
     background = canvas.get("background_color", "#FFFFFF")
     if not isinstance(background, str) or not _COLOR.fullmatch(background):
         raise ValueError("canvas.background_color must be a hex color")
+    background_image = canvas.get("background_image")
+    if background_image is not None and not isinstance(background_image, str):
+        raise ValueError("canvas.background_image must be a string or null")
 
     elements = design.get("elements")
     if not isinstance(elements, list) or len(elements) > 250:
@@ -79,6 +118,14 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             value = _finite_number(element.get(key), f"{prefix}.{key}")
             if key in {"width", "height"} and value <= 0:
                 raise ValueError(f"{prefix}.{key} must be positive")
+            if key in {"x", "y"} and not 0 <= value <= 2000:
+                raise ValueError(f"{prefix}.{key} is outside the supported range")
+            if key in {"width", "height"} and value > 2000:
+                raise ValueError(f"{prefix}.{key} is outside the supported range")
+            if key == "rotation" and abs(value) > 360:
+                raise ValueError(f"{prefix}.rotation is outside the supported range")
+        if not float(element["z_index"]).is_integer():
+            raise ValueError(f"{prefix}.z_index must be an integer")
         if abs(float(element["z_index"])) > 10000:
             raise ValueError(f"{prefix}.z_index is outside the supported range")
         if not isinstance(element.get("locked"), bool) or not isinstance(element.get("visible"), bool):
@@ -91,20 +138,76 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             color = style.get(key)
             if color is not None and (not isinstance(color, str) or not _COLOR.fullmatch(color)):
                 raise ValueError(f"{prefix}.style.{key} must be a hex color")
+        _optional_finite_number(
+            style, "border_width", f"{prefix}.style.border_width", minimum=0
+        )
+        _optional_finite_number(
+            style, "corner_radius", f"{prefix}.style.corner_radius", minimum=0
+        )
+        font_size = _optional_finite_number(
+            style, "font_size", f"{prefix}.style.font_size", minimum=0
+        )
+        if font_size == 0:
+            raise ValueError(f"{prefix}.style.font_size must be positive")
+        if "font_weight" in style:
+            font_weight = _finite_number(
+                style["font_weight"], f"{prefix}.style.font_weight"
+            )
+            if (
+                not font_weight.is_integer()
+                or font_weight % 100
+                or not 100 <= font_weight <= 900
+            ):
+                raise ValueError(
+                    f"{prefix}.style.font_weight must be 100 through 900 "
+                    "in steps of 100"
+                )
+        if "max_lines" in style:
+            max_lines = _finite_number(
+                style["max_lines"], f"{prefix}.style.max_lines"
+            )
+            if not max_lines.is_integer() or max_lines < 1:
+                raise ValueError(
+                    f"{prefix}.style.max_lines must be a positive integer"
+                )
+        if style.get("alignment") not in {None, "left", "center", "right"}:
+            raise ValueError(f"{prefix}.style.alignment is unsupported")
+        if style.get("fit") not in {None, "cover", "contain"}:
+            raise ValueError(f"{prefix}.style.fit is unsupported")
         for key, value in data.items():
             if isinstance(value, str) and len(value) > 2000:
                 raise ValueError(f"{prefix}.data.{key} is too long")
-        if element["type"] == "bound_text" and data.get("field") not in SUPPORTED_BINDING_FIELDS:
+        for key in _TEXT_DATA_KEYS & data.keys():
+            if not isinstance(data[key], str):
+                raise ValueError(f"{prefix}.data.{key} must be a string")
+        if (
+            element["type"] == "bound_text"
+            and data.get("field") not in SUPPORTED_BINDING_FIELDS
+        ):
             raise ValueError(f"{prefix} has an unknown student field binding")
         if element["type"] == "custom_field_text":
             field_uuid = data.get("field_uuid")
             try:
-                UUID(str(field_uuid))
+                parsed_uuid = UUID(field_uuid) if isinstance(field_uuid, str) else None
             except (TypeError, ValueError):
                 raise ValueError(f"{prefix}.data.field_uuid must be a UUID") from None
+            if parsed_uuid is None or str(parsed_uuid) != field_uuid:
+                raise ValueError(
+                    f"{prefix}.data.field_uuid must be a canonical UUID"
+                )
     settings = design.get("settings", {})
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")
+    for key in ("grid_enabled", "snap_enabled"):
+        if key in settings and not isinstance(settings[key], bool):
+            raise ValueError(f"settings.{key} must be a boolean")
+    grid_size = _optional_finite_number(
+        settings, "grid_size", "settings.grid_size", minimum=0
+    )
+    if grid_size == 0 or (grid_size is not None and grid_size > 200):
+        raise ValueError(
+            "settings.grid_size must be greater than 0 and at most 200"
+        )
     return design
 
 
@@ -112,13 +215,15 @@ class CardTemplateUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     design: dict[str, Any]
 
-    @field_validator("name")
+    @field_validator("name", mode="before")
     @classmethod
-    def strip_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+    def strip_name(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        if not trimmed:
             raise ValueError("name cannot be blank")
-        return value
+        return trimmed
 
     @field_validator("design")
     @classmethod

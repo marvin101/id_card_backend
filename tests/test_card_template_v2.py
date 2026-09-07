@@ -119,9 +119,53 @@ def test_invalid_numeric_geometry_is_rejected(key, value):
         CardTemplateUpdate(name="Card", design=document)
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("x", -0.1), ("y", 2000.1), ("width", 2000.1), ("rotation", 360.1)],
+)
+def test_geometry_outside_flutter_supported_range_is_rejected(key, value):
+    document = _document()
+    document["elements"][0][key] = value
+    with pytest.raises(ValidationError, match="supported range"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
 def test_system_and_custom_bindings_are_accepted_safely():
     payload = CardTemplateUpdate(name="Card", design=_document())
     assert payload.design["elements"][0]["data"]["field"] == "full_name"
+
+
+def test_custom_binding_uuid_must_use_the_canonical_wire_format():
+    document = _document()
+    document["elements"][1]["data"]["field_uuid"] = (
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+    )
+    with pytest.raises(ValidationError, match="canonical UUID"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "school_name",
+        "school_address",
+        "school_code",
+        "school_phone",
+        "school_email",
+        "school_website",
+        "school_city",
+        "school_district",
+        "school_state",
+        "school_country",
+        "school_postal_code",
+        "principal_name",
+    ],
+)
+def test_flutter_school_profile_bindings_are_accepted(field):
+    document = _document()
+    document["elements"][0]["data"]["field"] = field
+    payload = CardTemplateUpdate(name="Card", design=document)
+    assert payload.design["elements"][0]["data"]["field"] == field
 
 
 def test_unknown_system_binding_is_rejected():
@@ -129,3 +173,44 @@ def test_unknown_system_binding_is_rejected():
     document["elements"][0]["data"]["field"] = "password_hash"
     with pytest.raises(ValidationError, match="unknown student field"):
         CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    [
+        (("canvas", "background_image"), 42, "background_image"),
+        (("elements", 0, "z_index"), 1.5, "integer"),
+        (("elements", 0, "style", "font_weight"), "700", "number"),
+        (("elements", 0, "style", "max_lines"), 0, "positive integer"),
+        (("elements", 0, "style", "alignment"), "justify", "unsupported"),
+        (("elements", 0, "data", "fallback"), {"text": "unsafe"}, "string"),
+        (("settings", "grid_enabled"), "yes", "boolean"),
+        (("settings", "grid_size"), float("nan"), "finite"),
+    ],
+)
+def test_malformed_flutter_known_values_are_rejected(path, value, message):
+    document = _document()
+    target = document
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+def test_unknown_style_data_and_settings_keys_are_preserved():
+    document = _document()
+    document["elements"][0]["style"]["future_style"] = {"value": 1}
+    document["elements"][0]["data"]["future_data"] = ["value"]
+    document["settings"]["future_setting"] = "value"
+    assert CardTemplateUpdate(name="Card", design=document).design == document
+
+
+def test_name_is_trimmed_before_length_validation():
+    payload = CardTemplateUpdate(name=f"  {'x' * 120}  ", design=_document())
+    assert payload.name == "x" * 120
+
+
+def test_non_string_name_is_a_validation_error():
+    with pytest.raises(ValidationError):
+        CardTemplateUpdate(name=42, design=_document())
