@@ -85,6 +85,8 @@ School-scope rules:
 | `/public/forms/{token}` | Anonymous Public Form read; submissions use `/public/forms/{token}/submissions` |
 | `/schools/{school_uuid}/students/grid` | Bounded grid read and atomic bulk patch |
 | `/schools/{school_uuid}/card-template` | Per-school Card Designer template |
+| `/schools/{school_uuid}/card-template/public-share` | Administrator-only public-preview controls and link regeneration |
+| `/public/designs/{token}` | Anonymous read-only card-design preview using sample data |
 
 Use `/docs` or `/openapi.json` for exact methods, query parameters, request bodies, and response schemas.
 
@@ -106,7 +108,15 @@ Validation completes before endpoint persistence. A rejected request therefore l
 
 ### Concurrency
 
-Template responses include `updated_at`, but the endpoint does not yet enforce an ETag, revision, or optimistic-concurrency check. Concurrent editors can overwrite one another; the current behavior is last-write-wins.
+Template responses include `updated_at`; conditional saves compare `expected_updated_at` under a row lock and return `409 Conflict` for stale editors. Public-link settings do not advance this design-version token.
+
+## Public Design previews
+
+- School and platform administrators can enable, disable, copy, or regenerate a cryptographically random public-preview link.
+- Regeneration invalidates the prior link, while disabling makes the current link unavailable without deleting it.
+- Anonymous responses contain the saved design and its public school-profile bindings only. They contain no student records, access tokens, internal storage paths, or editing capability.
+- Flutter renders the page through the same `DesignDocumentView` used elsewhere, with clearly labelled sample student values.
+- The public read endpoint has an independent per-process rate limit and returns the same generic `404` for missing, disabled, or inactive-school previews.
 
 ## Student lifecycle and audit
 
@@ -218,12 +228,13 @@ The authoritative settings are in `app/core/config.py`. Environment names curren
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Private server-side Supabase key |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
-| `AUTH_RATE_LIMIT_ENABLED` | Enables process-local authentication and Public Form throttling |
+| `AUTH_RATE_LIMIT_ENABLED` | Enables process-local authentication and public-route throttling |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Sliding-window duration |
 | `LOGIN_RATE_LIMIT_REQUESTS` | Login requests allowed per client/window |
 | `REGISTRATION_RATE_LIMIT_REQUESTS` | Registration requests allowed per client/window |
 | `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS` | Public Form reads allowed per client/window |
 | `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS` | Public Form submissions allowed per client/window |
+| `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS` | Public Design reads allowed per client/window |
 | `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous submission request size |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Trusted reverse-proxy hops used to resolve the client address |
 

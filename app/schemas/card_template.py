@@ -246,3 +246,35 @@ class CardTemplateResponse(BaseModel):
     name: str
     design: dict[str, Any]
     updated_at: datetime
+
+
+class PublicDesignShareUpdate(BaseModel):
+    enabled: bool
+
+
+class PublicDesignShareResponse(BaseModel):
+    enabled: bool
+    public_token: str | None
+
+
+class PublicDesignSchool(BaseModel):
+    uuid: UUID
+    school_code: str
+    school_name: str
+    email: str | None
+    phone: str | None
+    website: str | None
+    address: str | None
+    city: str | None
+    district: str | None
+    state: str | None
+    country: str | None
+    postal_code: str | None
+    principal_name: str | None
+    logo_url: str | None
+
+
+class PublicDesignView(BaseModel):
+    name: str
+    design: dict[str, Any]
+    school: PublicDesignSchool
