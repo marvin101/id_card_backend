@@ -540,7 +540,9 @@ def list_students(
     # Order students
     # ------------------------------------------------------
 
-    query = query.order_by(Student.full_name)
+    # The primary name ordering is part of the existing product behaviour.
+    # The immutable database id makes duplicate names deterministic as well.
+    query = query.order_by(Student.full_name, Student.id)
 
     result = db.execute(query)
 

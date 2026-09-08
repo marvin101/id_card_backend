@@ -433,3 +433,53 @@ def test_student_list_filters_verification_and_printed(monkeypatch):
     sql = str(db.statement)
     assert "students.verification_status" in sql
     assert "students.print_count" in sql
+    assert "ORDER BY students.full_name, students.id" in sql
+
+
+def test_paged_student_export_query_is_scoped_stable_and_batchable(monkeypatch):
+    monkeypatch.setattr(students_api, "get_active_school", lambda *_: SimpleNamespace(id=3))
+    monkeypatch.setattr(students_api, "require_card_data_access", lambda *_args, **_kwargs: None)
+
+    class Result:
+        def __init__(self, *, count=None):
+            self.count = count
+
+        def scalar_one(self):
+            return self.count
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class PagedDb:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, statement):
+            sql = str(statement)
+            self.statements.append(sql)
+            return Result(count=1000 if "count(" in sql.lower() else None)
+
+    db = PagedDb()
+    page = students_api.list_students_paged(
+        uuid4(), limit=200, offset=400, search="asha",
+        session_uuid=None, class_uuid=None, section_uuid=None,
+        created_from=None, created_to=None,
+        verification_status=VerificationStatus.VERIFIED, printed=False,
+        db=db, current_user=SimpleNamespace(id=1),
+    )
+
+    assert page.total == 1000
+    assert page.offset == 400
+    assert page.limit == 200
+    assert page.has_more is True
+    query_sql = db.statements[-1]
+    assert "students.school_id" in query_sql
+    assert "students.is_active" in query_sql
+    assert "students.verification_status" in query_sql
+    assert "students.print_count" in query_sql
+    assert "lower(students.full_name) LIKE lower" in query_sql
+    assert "ORDER BY students.full_name, students.id" in query_sql
+    assert "LIMIT" in query_sql and "OFFSET" in query_sql
