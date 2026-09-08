@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.rate_limit import auth_rate_limiter
@@ -47,8 +48,12 @@ class _EndpointSession:
         self.access = access
         self.template = template
         self.commits = 0
+        self.rollbacks = 0
+        self.added = []
+        self.statements = []
 
     def execute(self, statement):
+        self.statements.append(statement)
         entity = statement.column_descriptions[0].get("entity")
         params = set(statement.compile().params.values())
 
@@ -85,6 +90,14 @@ class _EndpointSession:
 
     def commit(self):
         self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def add(self, value):
+        self.added.append(value)
+        if isinstance(value, CardTemplate):
+            self.template = value
 
     def refresh(self, _value):
         pass
@@ -304,6 +317,185 @@ def test_card_template_put_updates_one_school_template_and_returns_flutter_shape
     assert template.design == replacement
     assert session.template is template
     assert session.commits == 1
+
+
+def test_card_template_matching_token_succeeds_and_returns_a_new_token():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    original_token = datetime(2026, 9, 8, 1, 2, 3, 456789, tzinfo=timezone.utc)
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Original",
+        design={"version": 1},
+        updated_at=original_token,
+    )
+    session = _EndpointSession(
+        user=current_user, school=school, access=access, template=template
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Client A",
+                "design": {"version": 1, "school_title": "A"},
+                "expected_updated_at": "2026-09-08T01:02:03.456789Z",
+            },
+        )
+
+    assert response.status_code == 200
+    response_token = datetime.fromisoformat(response.json()["updated_at"])
+    assert response_token > original_token
+    assert template.updated_at == response_token
+    assert "FOR UPDATE" in str(session.statements[-1])
+
+
+def test_card_template_stale_token_conflicts_without_changing_stored_state():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    stored_design = {"version": 1, "school_title": "Stored"}
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Stored",
+        design=stored_design,
+        updated_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user, school=school, access=access, template=template
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Stale",
+                "design": {"version": 1, "school_title": "Stale"},
+                "expected_updated_at": "2026-09-07T00:00:00Z",
+            },
+        )
+
+    assert response.status_code == 409
+    assert "changed after it was loaded" in response.json()["detail"]
+    assert template.name == "Stored"
+    assert template.design is stored_design
+    assert session.commits == 0
+
+
+def test_card_template_two_clients_cannot_overwrite_each_other():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    loaded_token = datetime(2026, 9, 8, tzinfo=timezone.utc)
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Original",
+        design={"version": 1},
+        updated_at=loaded_token,
+    )
+    session = _EndpointSession(
+        user=current_user, school=school, access=access, template=template
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+    payload = {
+        "design": {"version": 1},
+        "expected_updated_at": loaded_token.isoformat(),
+    }
+
+    with TestClient(app) as client:
+        first = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={**payload, "name": "First client"},
+        )
+        second = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={**payload, "name": "Second client"},
+        )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert template.name == "First client"
+    assert session.commits == 1
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["not-a-timestamp", "2026-09-08T01:02:03"],
+)
+def test_card_template_malformed_or_timezone_less_token_is_rejected(token):
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Stored",
+        design={"version": 1},
+        updated_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user, school=school, access=access, template=template
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Rejected",
+                "design": {"version": 1},
+                "expected_updated_at": token,
+            },
+        )
+
+    assert response.status_code == 422
+    assert template.name == "Stored"
+    assert session.commits == 0
+
+
+def test_concurrent_first_template_create_returns_conflict_without_duplicate():
+    class _ConcurrentCreateSession(_EndpointSession):
+        def commit(self):
+            raise IntegrityError("unique school template", {}, RuntimeError())
+
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    session = _ConcurrentCreateSession(
+        user=current_user, school=school, access=access
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={"name": "First save", "design": {"version": 1}},
+        )
+
+    assert response.status_code == 409
+    assert len(session.added) == 1
+    assert session.rollbacks == 1
 
 
 def test_card_template_validation_failure_leaves_previous_record_unchanged():

@@ -214,6 +214,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
 class CardTemplateUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     design: dict[str, Any]
+    expected_updated_at: datetime | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -229,6 +230,13 @@ class CardTemplateUpdate(BaseModel):
     @classmethod
     def validate_design(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_design_document(value)
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def validate_expected_updated_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("expected_updated_at must include a timezone")
+        return value
 
 
 class CardTemplateResponse(BaseModel):
