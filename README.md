@@ -288,7 +288,7 @@ Tests use isolated fixtures and do not replace production smoke testing across e
 The production service runs on Render. Configure environment values in the Render dashboard and use:
 
 ```text
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
+uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log
 ```
 
 Current production API: `https://id-card-backend-vcz5.onrender.com`

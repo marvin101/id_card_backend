@@ -360,7 +360,7 @@ def test_manual_replacement_commits_new_url_before_deleting_old(monkeypatch):
     ]
 
 
-def test_manual_upload_failure_preserves_old_photo_without_deletion(monkeypatch):
+def test_manual_storage_failure_is_generic_and_preserves_old_photo(monkeypatch):
     _patch_manual_authorization(monkeypatch)
     student = _student()
     old_url = _managed_url(student.uuid)
@@ -370,14 +370,18 @@ def test_manual_upload_failure_preserves_old_photo_without_deletion(monkeypatch)
     monkeypatch.setattr(
         students_api,
         "save_student_photo",
-        lambda **_kwargs: (_ for _ in ()).throw(ValueError("storage offline")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            file_storage.StorageError("provider secret detail")
+        ),
     )
     monkeypatch.setattr(students_api, "delete_storage_object", deleted.append)
 
     with pytest.raises(Exception) as exc_info:
         _upload_manually(student, session)
 
-    assert getattr(exc_info.value, "status_code", None) == 422
+    assert getattr(exc_info.value, "status_code", None) == 502
+    assert exc_info.value.detail == "Student photo storage is currently unavailable."
+    assert "provider secret detail" not in exc_info.value.detail
     assert student.photo_path == old_url
     assert deleted == []
 

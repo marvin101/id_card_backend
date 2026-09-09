@@ -14,6 +14,7 @@ from app.core.database import get_db
 from app.core.file_storage import (
     ALLOWED_IMAGE_TYPES,
     MAX_STUDENT_PHOTO_SIZE,
+    StorageError,
     delete_storage_object,
     get_storage_public_url,
     managed_student_photo_storage_path,
@@ -311,6 +312,12 @@ async def submit_public_form(
                 student.photo_path = save_student_photo(student.uuid, content, photo.content_type)
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except StorageError as exc:
+                logger.error("Public-form photo storage failed", exc_info=True)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Photo storage is currently unavailable.",
+                ) from exc
             uploaded_path = managed_student_photo_storage_path(student.photo_path, student.uuid)
         record_student_audit(
             db, student=student, actor=None, event_type="student_created",

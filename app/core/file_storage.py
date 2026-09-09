@@ -134,9 +134,7 @@ def save_student_photo(
             )
 
     except Exception as exc:
-        raise ValueError(
-            f"Failed to upload student photo: {exc}"
-        ) from exc
+        raise StorageError("Failed to upload student photo") from exc
 
     public_url = (
         supabase.storage

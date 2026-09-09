@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
 from app.core.file_storage import (
+    MAX_STUDENT_PHOTO_SIZE,
+    StorageError,
     delete_storage_object,
     managed_student_photo_storage_path,
     save_student_photo,
@@ -313,7 +315,7 @@ async def upload_student_photo(
     # Read uploaded photo
     # ------------------------------------------------------
 
-    content = await photo.read()
+    content = await photo.read(MAX_STUDENT_PHOTO_SIZE + 1)
 
     if not content:
         raise HTTPException(
@@ -337,6 +339,12 @@ async def upload_student_photo(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
+        ) from exc
+    except StorageError as exc:
+        logger.error("Student photo storage failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Student photo storage is currently unavailable.",
         ) from exc
 
     # ------------------------------------------------------

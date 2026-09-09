@@ -64,6 +64,16 @@ def test_cors_exposes_download_filename_header_to_browser_clients():
     assert "content-disposition" in exposed
 
 
+def test_cors_rejects_unconfigured_vercel_lookalike_origin():
+    with TestClient(app) as client:
+        response = client.get(
+            "/health",
+            headers={"Origin": "https://idcard-flutter-attacker.vercel.app"},
+        )
+
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_database_health_is_200_when_connected():
     _override_db(_HealthyDatabase())
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.bulk_student_photos import (
     BulkPhotoValidationError,
+    MAX_ZIP_SIZE,
     inspect_zip,
 )
 from app.core.database import get_db
@@ -402,7 +403,7 @@ async def upload_bulk_student_photos(
             detail="Please upload a ZIP archive.",
         )
 
-    content = await archive.read()
+    content = await archive.read(MAX_ZIP_SIZE + 1)
 
     try:
         entries = inspect_zip(content)
@@ -759,6 +760,11 @@ def commit_bulk_student_photos(
         except Exception as exc:
 
             db.rollback()
+            logger.error(
+                "Bulk photo item failed for import %s",
+                manifest.uuid,
+                exc_info=True,
+            )
             student.photo_path = previous_photo_path
             item.clear()
             item.update(previous_item)
@@ -788,7 +794,7 @@ def commit_bulk_student_photos(
                     student_uuid=student.uuid,
                     student_name=student.full_name,
                     status="failed",
-                    detail=str(exc),
+                    detail="Photo could not be uploaded.",
                 )
             )
 

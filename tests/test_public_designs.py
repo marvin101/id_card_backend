@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 
 from app.api.card_templates import public_router
@@ -162,6 +164,8 @@ def test_anonymous_caller_cannot_mutate_public_design_settings():
 def test_admin_can_enable_disable_and_regenerate_the_share_link():
     school, template, user, db = _fixture(enabled=False)
     template.public_token = None
+    template.updated_at = object()
+    original_updated_at = template.updated_at
     _override(db, user)
     with TestClient(app) as client:
         enabled = client.put(
@@ -172,9 +176,16 @@ def test_admin_can_enable_disable_and_regenerate_the_share_link():
         regenerated = client.post(
             f"/schools/{school.uuid}/card-template/public-share/regenerate-link"
         )
+        old_preview = client.get(f"/public/designs/{first_token}")
+        new_preview = client.get(
+            f"/public/designs/{regenerated.json()['public_token']}"
+        )
         disabled = client.put(
             f"/schools/{school.uuid}/card-template/public-share",
             json={"enabled": False},
+        )
+        disabled_preview = client.get(
+            f"/public/designs/{regenerated.json()['public_token']}"
         )
 
     assert enabled.status_code == 200
@@ -182,7 +193,11 @@ def test_admin_can_enable_disable_and_regenerate_the_share_link():
     assert len(first_token) >= 32
     assert regenerated.status_code == 200
     assert regenerated.json()["public_token"] != first_token
+    assert old_preview.status_code == 404
+    assert new_preview.status_code == 200
     assert disabled.json()["enabled"] is False
+    assert disabled_preview.status_code == 404
+    assert template.updated_at is original_updated_at
     assert db.commits == 3
 
 
@@ -196,9 +211,10 @@ def test_non_admin_cannot_manage_public_design_link():
     assert response.status_code == 403
 
 
-def test_public_design_migration_is_single_head_and_revocable():
+def test_public_design_migration_is_revocable_and_rls_hardening_is_head():
+    root = Path(__file__).parents[1]
     migration = (
-        Path(__file__).parents[1]
+        root
         / "migrations"
         / "versions"
         / "b8e2f14c9a70_add_public_card_design_sharing.py"
@@ -207,3 +223,16 @@ def test_public_design_migration_is_single_head_and_revocable():
     assert "public_enabled" in migration
     assert "public_token" in migration
     assert "unique=True" in migration
+
+    rls_migration = (
+        root
+        / "migrations"
+        / "versions"
+        / "e4c7a91d2f60_enable_rls_on_bulk_photo_imports.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "b8e2f14c9a70"' in rls_migration
+    assert 'ALTER TABLE public."bulk_photo_imports" ENABLE ROW LEVEL SECURITY' in rls_migration
+
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "migrations"))
+    assert ScriptDirectory.from_config(config).get_heads() == ["e4c7a91d2f60"]

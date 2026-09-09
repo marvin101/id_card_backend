@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.file_storage import (
+    MAX_SCHOOL_LOGO_SIZE,
     StorageError,
     delete_storage_object,
     get_storage_public_url,
@@ -181,7 +182,7 @@ async def upload_school_logo(
         "Only a platform or school administrator can update the school logo",
     )
 
-    content = await logo.read()
+    content = await logo.read(MAX_SCHOOL_LOGO_SIZE + 1)
     old_logo_path = school.logo_path
 
     try:

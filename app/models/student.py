@@ -260,37 +260,6 @@ class Student(Base):
         nullable=False, default=0, server_default="0", index=True
     )
 
-        # ==========================================================
-    # Relationships
-    # ==========================================================
-
-    academic_session: Mapped["AcademicSession"] = relationship(
-        back_populates="students",
-        primaryjoin=lambda: and_(
-            Student.session_id == foreign(_academic_session_model().id),
-            Student.school_id == _academic_session_model().school_id,
-        ),
-        foreign_keys=lambda: [Student.session_id],
-    )
-
-    school_class: Mapped["SchoolClass"] = relationship(
-        back_populates="students",
-        primaryjoin=lambda: and_(
-            Student.class_id == foreign(_school_class_model().id),
-            Student.school_id == _school_class_model().school_id,
-        ),
-        foreign_keys=lambda: [Student.class_id],
-    )
-
-    section: Mapped["Section"] = relationship(
-        back_populates="students",
-        primaryjoin=lambda: and_(
-            Student.section_id == foreign(_section_model().id),
-            Student.class_id == _section_model().class_id,
-        ),
-        foreign_keys=lambda: [Student.section_id],
-    )
-
     @property
     def session_uuid(self) -> UUID:
         return self.academic_session.uuid

@@ -24,7 +24,7 @@ from app.api.public_forms import (
 from app.core.student_audit import record_student_audit
 from app.core.rate_limit import enforce_public_form_rate_limit, public_form_rate_limiter
 from app.core.config import settings
-from app.core.file_storage import MAX_STUDENT_PHOTO_SIZE
+from app.core.file_storage import MAX_STUDENT_PHOTO_SIZE, StorageError
 from app.schemas.public_form import PublicFormConfigWrite, PublicStudentInput
 from app.models.student import Student
 from app.models.student_audit_event import StudentAuditEvent
@@ -362,15 +362,18 @@ def test_public_get_exposes_photo_required_state(
     assert response.photo_required is expected
 
 
-def test_storage_failure_rolls_back_without_committing_student(monkeypatch):
+def test_storage_failure_is_generic_and_rolls_back(monkeypatch):
     payload_json = _submission_json()
     session, school_class, section = _academic_records(payload_json)
     db = _SubmissionDatabase([_submission_form(allow_photo=True)], [session], [school_class], [section], [])
     photo = UploadFile(filename="photo.png", file=io.BytesIO(b"image"), headers=Headers({"content-type": "image/png"}))
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.api.public_forms.save_student_photo", lambda *args: (_ for _ in ()).throw(ValueError("storage failed")))
-    with pytest.raises(HTTPException, match="storage failed"):
+    monkeypatch.setattr("app.api.public_forms.save_student_photo", lambda *args: (_ for _ in ()).throw(StorageError("provider secret detail")))
+    with pytest.raises(HTTPException) as raised:
         asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
+    assert raised.value.status_code == 502
+    assert raised.value.detail == "Photo storage is currently unavailable."
+    assert "provider secret detail" not in raised.value.detail
     assert db.rolled_back is True and db.committed is False
 
 

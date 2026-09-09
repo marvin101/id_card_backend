@@ -35,10 +35,14 @@ The names below come from `app/core/config.py` and `.env.example`. Required valu
 | `SUPABASE_URL` | Supabase project URL used by Storage |
 | `SUPABASE_SECRET_KEY` | Private server-side Supabase key used by Storage |
 | `CORS_ORIGINS` | Comma-separated allowed frontend origins |
-| `AUTH_RATE_LIMIT_ENABLED` | Enables process-local public-auth throttling |
+| `AUTH_RATE_LIMIT_ENABLED` | Enables process-local authentication and public-route throttling |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window |
 | `LOGIN_RATE_LIMIT_REQUESTS` | Login requests allowed per client and window |
 | `REGISTRATION_RATE_LIMIT_REQUESTS` | Registration requests allowed per client and window |
+| `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS` | Public-form reads allowed per client and window |
+| `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS` | Public-form submissions allowed per client and window |
+| `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS` | Public-design reads allowed per client and window |
+| `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous public-form request size |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Controlled reverse-proxy hops used to resolve client addresses |
 
 Before deployment, confirm every required value is present, `SECRET_KEY` is a strong production-only value, the Vercel production origin is allowed by `CORS_ORIGINS`, and the trusted proxy-hop count matches Render's actual topology. Do not expose `SUPABASE_SECRET_KEY` or any database credential to Flutter Web.
@@ -56,9 +60,13 @@ CampusID uses bearer access tokens. Their lifetime is controlled by `ACCESS_TOKE
 
 Changing `SECRET_KEY` invalidates all JWTs signed with the previous key. Plan that rotation as a forced sign-in event and verify authentication immediately afterward.
 
+## Logging
+
+Public-form and public-design tokens are revocable capabilities carried in URL paths. Run Uvicorn with `--no-access-log` so application access logs do not persist those tokens; application and server error logging remains enabled. Review Render or any upstream proxy logging separately and configure path redaction or suitably restricted retention before launch. Do not log bearer tokens, passwords, raw uploads, or student record bodies.
+
 ## Authentication rate limiting
 
-The application protects login and registration with an in-memory, process-local limiter. Review the enabled flag, window, login limit, registration limit, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` before each production deployment.
+The application protects login, registration, public forms, and public-design previews with in-memory, process-local limiters. Review the enabled flag, window, endpoint limits, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` before each production deployment.
 
 Because limiter state is not shared, scaling to multiple workers or instances multiplies the effective allowance. Before horizontal scaling, use an appropriate shared or edge control, then decide whether the application limiter should remain enabled to avoid an unintended double limit.
 

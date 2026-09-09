@@ -340,6 +340,8 @@ def test_failed_promotion_preserves_previous_photo_and_temp_object(monkeypatch):
     )
 
     assert response.failed_count == 1
+    assert response.items[0].detail == "Photo could not be uploaded."
+    assert "storage offline" not in response.items[0].detail
     assert student.photo_path == old_photo
     assert deleted == []
     assert manifest.manifest[0]["temp_storage_path"] == temp_path
