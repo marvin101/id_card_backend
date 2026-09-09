@@ -18,6 +18,16 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
   and custom-field content with print-safe geometry and styling limits.
 - Added scoped multi-field QR payloads with unique bindings and structured JSON
   or labeled-text output.
+- Added revocable per-student public verification links, school-level disclosure
+  controls, generic anonymous failure responses, and independent read throttling.
+- Added a QR-only `verification_url` binding so cards can encode a capability
+  link without embedding student PII.
+
+### Security
+
+- Public verification is disabled by default, limited to an explicit safe-field
+  allowlist, rate-limited independently, non-cacheable, and returns one generic
+  not-found response for invalid, disabled, revoked, or inactive records.
 
 ## [0.7.0] - 2026-09-02
 

@@ -16,13 +16,15 @@ Record the release owner, candidate Git commit IDs, migration revision, verifica
 - [ ] `python -m pytest` passes.
 - [ ] `python -m compileall app` passes.
 - [ ] `python -m alembic heads` shows the reviewed intended single head; the deployed/current revision and target head have been compared.
+- [ ] The intended target is `a1d4e7f9b2c5`; its student-token backfill, unique index, school disclosure defaults, and downgrade have been reviewed.
 - [ ] Every pending migration has been manually reviewed before intentional production application, including data-loss and downgrade implications.
-- [ ] All Settings variables required by Render are configured: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `SECRET_KEY`, `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `CORS_ORIGINS`, `AUTH_RATE_LIMIT_ENABLED`, `AUTH_RATE_LIMIT_WINDOW_SECONDS`, `LOGIN_RATE_LIMIT_REQUESTS`, `REGISTRATION_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS`, `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_MAX_REQUEST_BYTES`, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS`.
+- [ ] All Settings variables required by Render are configured: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `SECRET_KEY`, `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `CORS_ORIGINS`, `AUTH_RATE_LIMIT_ENABLED`, `AUTH_RATE_LIMIT_WINDOW_SECONDS`, `LOGIN_RATE_LIMIT_REQUESTS`, `REGISTRATION_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS`, `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS`, `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS`, `PUBLIC_FORM_MAX_REQUEST_BYTES`, `PUBLIC_APP_URL`, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS`.
 - [ ] `SECRET_KEY` is a strong, production-only value and is not present in source, logs, tickets, or the Flutter build.
 - [ ] `ACCESS_TOKEN_EXPIRE_MINUTES` has been reviewed for the launch policy.
-- [ ] Login, registration, public-form, and public-design rate-limit enablement, window, and request limits have been reviewed.
+- [ ] Login, registration, public-form, public-design, and public-verification rate-limit enablement, window, and request limits have been reviewed.
 - [ ] `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` matches the actual Render proxy chain; do not trust additional hops.
 - [ ] Production CORS origins contain only approved frontend origins.
+- [ ] `PUBLIC_APP_URL` exactly matches the canonical HTTPS Flutter origin; it has no route suffix or unintended trailing path.
 - [ ] Uvicorn runs with `--no-access-log`, and Render/upstream request-path logging has reviewed redaction or restricted retention for public capability URLs.
 - [ ] `GET /health` reports healthy process liveness.
 - [ ] `GET /health/check` confirms database readiness; a simulated/known database failure returns `503` without leaking details.
@@ -64,6 +66,7 @@ local Flutter release build
 - [ ] Footer links open Privacy, Terms, and Contact & Support; back/home navigation works.
 - [ ] Direct/deep Flutter Web routes work after browser refresh, including `/privacy`, `/terms`, `/support`, `/sign-in`, and `/register` as applicable to the hosting route mode.
 - [ ] Direct navigation and browser refresh work for `/design`, `/cards`, and `/public/designs/<token>`.
+- [ ] Direct navigation and browser refresh work for `/verify/<token>`.
 - [ ] Registration school list loads.
 - [ ] Registration submits the selected `school_uuid` successfully and creates the expected pending access request.
 - [ ] Login works and an authorized user reaches the correct landing experience.
@@ -80,6 +83,7 @@ local Flutter release build
 - [ ] Single-card generation works and output is reviewed.
 - [ ] Bulk PDF generation works and representative output is reviewed.
 - [ ] Public design sharing can be enabled, fetched anonymously, disabled, and regenerated; old tokens return the generic `404`.
+- [ ] Public student verification can be enabled with scoped fields; QR scans open the right student, school/student disabling returns the generic `404`, and a regenerated token invalidates the old link.
 - [ ] An expired session clears local auth/school state and returns the user to sign-in with the session-expired message.
 - [ ] A `403` authorization response displays/handles denial without incorrectly signing the user out.
 - [ ] Backend `GET /health/check` confirms database readiness after deployment.

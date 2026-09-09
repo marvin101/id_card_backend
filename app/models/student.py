@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import secrets
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -259,6 +260,16 @@ class Student(Base):
     print_count: Mapped[int] = mapped_column(
         nullable=False, default=0, server_default="0", index=True
     )
+    public_verification_token: Mapped[str] = mapped_column(
+        String(96),
+        unique=True,
+        nullable=False,
+        default=lambda: secrets.token_urlsafe(32),
+        index=True,
+    )
+    public_verification_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     @property
     def session_uuid(self) -> UUID:
@@ -344,6 +355,15 @@ class Student(Base):
         if self.verification_status != "verified":
             return self.verification_status
         return "printed" if self.print_count > 0 else "ready_for_print"
+
+    @property
+    def verification_url(self) -> str | None:
+        from app.core.config import settings
+
+        if not self.public_verification_token:
+            return None
+        base = settings.public_app_url.rstrip("/")
+        return f"{base}/verify/{self.public_verification_token}"
 
     @property
     def custom_fields(self) -> list[dict]:

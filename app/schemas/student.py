@@ -164,6 +164,8 @@ class StudentResponse(BaseModel):
     printed_by_user_uuid: UUID | None = None
     printed_by_name: str | None = None
     print_count: int = 0
+    verification_url: str | None = None
+    public_verification_enabled: bool = True
 
     is_active: bool
     custom_fields: list[StudentCustomFieldResponse] = Field(default_factory=list)

@@ -46,6 +46,7 @@ SUPPORTED_BINDING_FIELDS = {
     "school_postal_code",
     "principal_name",
 }
+SUPPORTED_QR_BINDING_FIELDS = SUPPORTED_BINDING_FIELDS | {"verification_url"}
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _TEXT_DATA_KEYS = {"text", "prefix", "suffix", "fallback", "label"}
 _KNOWN_STYLE_KEYS = {
@@ -358,7 +359,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"{prefix}.data.text cannot be blank")
             if selector == "field" and (
                 not isinstance(data["field"], str)
-                or data["field"] not in SUPPORTED_BINDING_FIELDS
+                or data["field"] not in SUPPORTED_QR_BINDING_FIELDS
             ):
                 raise ValueError(f"{prefix} has an unknown QR field binding")
             if selector == "field_uuid":

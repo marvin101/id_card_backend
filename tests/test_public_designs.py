@@ -235,4 +235,4 @@ def test_public_design_migration_is_revocable_and_rls_hardening_is_head():
 
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["e4c7a91d2f60"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["a1d4e7f9b2c5"]

@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -123,6 +123,16 @@ class School(Base):
     principal_name: Mapped[str | None] = mapped_column(
         String(150),
         nullable=True,
+    )
+
+    public_verification_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    public_verification_fields: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: ["full_name", "admission_no", "class", "section"],
+        server_default='["full_name", "admission_no", "class", "section"]',
     )
 
     # ==========================================================

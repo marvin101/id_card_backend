@@ -36,7 +36,11 @@ class Settings(BaseSettings):
     public_form_get_rate_limit_requests: int = Field(default=60, ge=1)
     public_form_submit_rate_limit_requests: int = Field(default=10, ge=1)
     public_design_get_rate_limit_requests: int = Field(default=60, ge=1)
+    public_verification_get_rate_limit_requests: int = Field(default=120, ge=1)
     public_form_max_request_bytes: int = Field(default=7 * 1024 * 1024, ge=1024)
+
+    # Public web origin used in revocable student-verification QR links.
+    public_app_url: str = "https://idcard-flutter-web.vercel.app"
 
     # Only trust forwarded client addresses when this many known proxies sit
     # directly in front of the application. Keep at 0 for direct exposure.

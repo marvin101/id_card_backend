@@ -42,7 +42,9 @@ The names below come from `app/core/config.py` and `.env.example`. Required valu
 | `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS` | Public-form reads allowed per client and window |
 | `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS` | Public-form submissions allowed per client and window |
 | `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS` | Public-design reads allowed per client and window |
+| `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` | Public student-verification reads allowed per client and window |
 | `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous public-form request size |
+| `PUBLIC_APP_URL` | Canonical Flutter origin placed in student-verification QR links |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Controlled reverse-proxy hops used to resolve client addresses |
 
 Before deployment, confirm every required value is present, `SECRET_KEY` is a strong production-only value, the Vercel production origin is allowed by `CORS_ORIGINS`, and the trusted proxy-hop count matches Render's actual topology. Do not expose `SUPABASE_SECRET_KEY` or any database credential to Flutter Web.
@@ -62,11 +64,21 @@ Changing `SECRET_KEY` invalidates all JWTs signed with the previous key. Plan th
 
 ## Logging
 
-Public-form and public-design tokens are revocable capabilities carried in URL paths. Run Uvicorn with `--no-access-log` so application access logs do not persist those tokens; application and server error logging remains enabled. Review Render or any upstream proxy logging separately and configure path redaction or suitably restricted retention before launch. Do not log bearer tokens, passwords, raw uploads, or student record bodies.
+Public-form, public-design, and student-verification tokens are revocable capabilities carried in URL paths. Run Uvicorn with `--no-access-log` so application access logs do not persist those tokens; application and server error logging remains enabled. Review Render or any upstream proxy logging separately and configure path redaction or suitably restricted retention before launch. Do not log bearer tokens, passwords, raw uploads, student record bodies, or capability URLs.
 
 ## Authentication rate limiting
 
-The application protects login, registration, public forms, and public-design previews with in-memory, process-local limiters. Review the enabled flag, window, endpoint limits, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` before each production deployment.
+The application protects login, registration, public forms, public-design previews, and student verification with in-memory, process-local limiters. Review the enabled flag, window, endpoint limits, and `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` before each production deployment.
+
+## Student-verification incident response
+
+If one card or URL is exposed unexpectedly, disable that student's link first,
+then regenerate it and reprint the card after the incident is reviewed. If the
+scope is uncertain, disable school-wide public verification to revoke all links
+immediately without deleting their tokens. Do not rotate the JWT `SECRET_KEY` for
+a verification-link incident; the capability is independent of authentication
+tokens. Record the affected school/student identifiers and actions in the
+approved incident system without copying the public capability URL.
 
 Because limiter state is not shared, scaling to multiple workers or instances multiplies the effective allowance. Before horizontal scaling, use an appropriate shared or edge control, then decide whether the application limiter should remain enabled to avoid an unintended double limit.
 

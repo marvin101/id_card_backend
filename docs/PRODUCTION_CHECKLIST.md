@@ -6,9 +6,10 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] Back up PostgreSQL and verify the documented restore procedure and owner.
 - [ ] Confirm the database revision with `python -m alembic current` and the single target head with `python -m alembic heads`.
-- [ ] Review every pending migration, including `e4c7a91d2f60`, and run `python -m alembic upgrade head` as an explicit release step.
+- [ ] Review every pending migration through `a1d4e7f9b2c5`, including token backfill and disclosure defaults, and run `python -m alembic upgrade head` as an explicit release step.
 - [ ] Configure every variable listed in `.env.example`; use a strong production-only `SECRET_KEY` and the exact approved frontend origins in `CORS_ORIGINS`.
-- [ ] Confirm Render's trusted proxy-hop count and that login, registration, public-form, and public-design rate limiting remain enabled or have reviewed edge equivalents.
+- [ ] Set `PUBLIC_APP_URL` to the canonical Vercel production origin and confirm `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` is reviewed.
+- [ ] Confirm Render's trusted proxy-hop count and that login, registration, public-form, public-design, and public-verification rate limiting remain enabled or have reviewed edge equivalents.
 - [ ] Confirm the Supabase Storage bucket policy, backup implications, and cleanup procedure for student photos and temporary bulk-import objects.
 - [ ] Replace or explicitly approve every Flutter launch placeholder, including the support address.
 - [ ] Run backend tests and compilation, Flutter tests and analysis, and both repositories' `git diff --check`.
@@ -18,7 +19,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] `GET /health` returns `200` without authentication.
 - [ ] `GET /health/check` returns `200`; a controlled database outage returns generic `503` without internal details.
-- [ ] `python -m alembic current` reports `e4c7a91d2f60` after migration.
+- [ ] `python -m alembic current` reports `a1d4e7f9b2c5` after migration.
 - [ ] Direct Supabase Data API access to application tables remains denied by RLS, including `bulk_photo_imports`.
 - [ ] Expected `400`, `401`, `403`, `404`, `409`, `413`, `422`, and `429` responses contain useful safe messages; an induced server failure returns generic `500`/`502` without provider or SQL details.
 
@@ -35,11 +36,16 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Confirm failed export does not change print lifecycle. After a successful print action, verify print count and audit history update only for the confirmed scope.
 - [ ] Enable public sharing, open the link anonymously, and confirm the browser requests no student endpoint. Disable it and confirm generic `404`; regenerate and confirm only the new token works; repeat with an inactive school.
 - [ ] Confirm anonymous template mutation returns `401` and a non-admin share-management request returns `403`.
+- [ ] Add the recommended Verification link QR source, save the template, and confirm Cards/PDF output contains a short `/verify/<token>` URL rather than embedded PII.
+- [ ] Enable public verification with an intentionally limited field set; scan a card and confirm only those fields, school identity, and lifecycle status appear.
+- [ ] Disable one student's link and confirm generic `404`; re-enable it, regenerate the link, confirm the old QR fails, and reprint the card with the new link.
+- [ ] Disable school-wide verification and confirm every student link becomes unavailable without changing the saved tokens.
+- [ ] Confirm an anonymous verification request has no bearer header, a non-admin cannot manage disclosure/link settings, and sensitive fields cannot be selected.
 - [ ] Let a token expire, refresh a protected route, and verify local auth/school state clears without a redirect loop. Log in again, then log out and confirm protected history is inaccessible.
 
 ## Hosting and rollback
 
-- [ ] Refresh `/design`, `/cards`, and `/public/designs/<token>` on Vercel; none returns a hosting `404`.
+- [ ] Refresh `/design`, `/cards`, `/public/designs/<token>`, and `/verify/<token>` on Vercel; none returns a hosting `404`.
 - [ ] Verify authenticated, anonymous public-design, public-form, and upload CORS requests from the approved frontend origin; verify an unapproved origin receives no CORS allow header.
 - [ ] Confirm Render uses `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log`, the readiness check targets `/health/check`, and upstream logs do not retain public capability URLs without reviewed controls.
 - [ ] Record the last known-good backend/frontend artifacts and the database recovery decision point.

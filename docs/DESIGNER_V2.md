@@ -58,6 +58,18 @@ alternative `labeled_text` format emits one `Label: value` line per selected
 field. JSON payloads cannot use a prefix or suffix, preserving valid structured
 data when the code is scanned.
 
+`verification_url` is a special single-field QR binding. It resolves to the
+student's random public capability URL and is deliberately rejected for
+`bound_text` and multi-field QR payloads. This keeps the opaque link inside the
+QR code and prevents accidental visible or mixed PII payloads. New QR elements
+created by Flutter use this recommended source by default; existing static,
+single-field, custom-field, and multi-field QR documents remain compatible.
+
+The linked public page remains unavailable until a school administrator enables
+public verification and selects the permitted disclosure fields. Disabling the
+school or student setting revokes access, while regenerating a student's token
+invalidates the prior link and requires cards containing it to be reprinted.
+
 The editor-supported bounds are `font_size <= 20`, `border_width <= 10`,
 `corner_radius <= 30`, and `max_lines <= 100`; an explicitly configured line
 width must be positive. Recognized data and style properties on incompatible

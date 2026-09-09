@@ -68,6 +68,7 @@ class InMemoryRateLimiter:
 auth_rate_limiter = InMemoryRateLimiter()
 public_form_rate_limiter = InMemoryRateLimiter()
 public_design_rate_limiter = InMemoryRateLimiter()
+public_verification_rate_limiter = InMemoryRateLimiter()
 
 
 def _normalized_ip(value: str | None) -> str | None:
@@ -155,6 +156,22 @@ def enforce_public_design_rate_limit(request: Request) -> None:
     decision = public_design_rate_limiter.check(
         f"public-design-get:{get_client_address(request)}",
         limit=settings.public_design_get_rate_limit_requests,
+        window_seconds=settings.auth_rate_limit_window_seconds,
+    )
+    if not decision.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+            headers={"Retry-After": str(decision.retry_after)},
+        )
+
+
+def enforce_public_verification_rate_limit(request: Request) -> None:
+    if not settings.auth_rate_limit_enabled:
+        return
+    decision = public_verification_rate_limiter.check(
+        f"public-verification-get:{get_client_address(request)}",
+        limit=settings.public_verification_get_rate_limit_requests,
         window_seconds=settings.auth_rate_limit_window_seconds,
     )
     if not decision.allowed:

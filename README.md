@@ -6,7 +6,7 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 
 - **CampusID v0.7.0** — the Excel Grid release.
 - Includes the production-smoke-tested grid API, Public Forms from the 0.6.x milestone, student lifecycle and audit controls, bulk imports, dynamic student fields, and the current card/PDF workflow.
-- Remains pre-1.0 while Designer v2 continues to mature and digital identity, advanced print production, and other roadmap modules are still in development.
+- Remains pre-1.0 while Designer v2, secure digital verification, advanced print production, and other roadmap modules continue to mature. Verification-link work is currently tracked under **Unreleased** and does not change the published `0.7.0` version.
 
 ## Architecture
 
@@ -45,7 +45,8 @@ The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage
 - Public Forms with school branding, configured fields, optional or required photo, and anonymous submission
 - Excel Grid paging, filtering, search, inline bulk updates, conflict detection, and structured validation errors
 - Per-school Card Designer template storage
-- CORS, request-size controls, authentication/Public Form throttling, and health endpoints
+- CORS, request-size controls, authentication/public-route throttling, and health endpoints
+- Revocable public student-verification links with school-controlled disclosure
 
 ## Authorization model
 
@@ -87,6 +88,9 @@ School-scope rules:
 | `/schools/{school_uuid}/card-template` | Per-school Card Designer template |
 | `/schools/{school_uuid}/card-template/public-share` | Administrator-only public-preview controls and link regeneration |
 | `/public/designs/{token}` | Anonymous read-only card-design preview using sample data |
+| `/schools/{school_uuid}/public-verification` | Administrator-only public-verification policy and disclosed fields |
+| `/schools/{school_uuid}/students/{student_uuid}/public-verification` | Per-student link enablement and regeneration |
+| `/public/verifications/{token}` | Anonymous, read-only student verification result |
 
 Use `/docs` or `/openapi.json` for exact methods, query parameters, request bodies, and response schemas.
 
@@ -117,6 +121,15 @@ Template responses include `updated_at`; conditional saves compare `expected_upd
 - Anonymous responses contain the saved design and its public school-profile bindings only. They contain no student records, access tokens, internal storage paths, or editing capability.
 - Flutter renders the page through the same `DesignDocumentView` used elsewhere, with clearly labelled sample student values.
 - The public read endpoint has an independent per-process rate limit and returns the same generic `404` for missing, disabled, or inactive-school previews.
+
+## Public student verification
+
+- Each student receives a random, non-enumerable capability URL. The Designer's recommended QR source encodes only that URL, not student PII.
+- Public verification is disabled for each school until an administrator enables it and chooses the disclosed fields.
+- The public response permits only name, admission/roll number, stream, academic session, class, section, and photo; contact, address, Aadhaar, parent, audit, and internal identifiers are never eligible.
+- Administrators can disable all school links, disable one student's link, or regenerate one student's token to invalidate the old QR/link.
+- Missing, disabled, revoked, and inactive records share a generic `404`; successful and failed reads use `Cache-Control: no-store`, and reads have an independent rate limit.
+- `PUBLIC_APP_URL` must be the canonical deployed Flutter origin so generated QR links open the public `/verify/<token>` page.
 
 ## Student lifecycle and audit
 
@@ -235,7 +248,9 @@ The authoritative settings are in `app/core/config.py`. Environment names curren
 | `PUBLIC_FORM_GET_RATE_LIMIT_REQUESTS` | Public Form reads allowed per client/window |
 | `PUBLIC_FORM_SUBMIT_RATE_LIMIT_REQUESTS` | Public Form submissions allowed per client/window |
 | `PUBLIC_DESIGN_GET_RATE_LIMIT_REQUESTS` | Public Design reads allowed per client/window |
+| `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` | Public student-verification reads allowed per client/window |
 | `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous submission request size |
+| `PUBLIC_APP_URL` | Canonical Flutter origin used to construct student-verification QR links |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Trusted reverse-proxy hops used to resolve the client address |
 
 These names are case-insensitive through Pydantic Settings. Keep all values server-side.
@@ -273,7 +288,7 @@ python -m uvicorn app.main:app --reload
 
 ## Testing
 
-The repository includes focused pytest coverage for authorization matrices, endpoint integration, authentication configuration/rate limiting, school access requests and profiles, dynamic student fields, Excel imports, bulk-photo storage, student photos, lifecycle/audit behavior, Public Forms, and the Excel Grid.
+The repository includes focused pytest coverage for authorization matrices, endpoint integration, authentication configuration/rate limiting, school access requests and profiles, dynamic student fields, Excel imports, bulk-photo storage, student photos, lifecycle/audit behavior, Public Forms, public design sharing, revocable student verification, Designer v2, and the Excel Grid.
 
 ```powershell
 python -m pytest
@@ -299,7 +314,7 @@ Before deployment:
 2. Configure secrets and all required environment variables in Render.
 3. Confirm the Vercel production origin is allowed by CORS.
 4. Confirm Supabase Storage credentials and bucket policies support server-side logo/photo operations.
-5. Verify health, authentication, school scoping, Public Forms, imports, uploads, grid saves, templates, and PDF-facing data after deployment.
+5. Verify health, authentication, school scoping, Public Forms, imports, uploads, grid saves, templates, public verification, and PDF-facing data after deployment.
 
 The built-in limiter is process local. For the normal Render proxy topology, `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS=1` may be appropriate, but the deployed proxy chain must be verified. Multi-worker or multi-instance deployments need equivalent edge enforcement or a shared limiter.
 
@@ -311,9 +326,9 @@ The current release is `0.7.0`: `0.6.x` represented Public Forms and `0.7.0` add
 
 ## Roadmap
 
-- Designer v2 concurrency and remaining contract hardening
-- QR/barcode and digital identity
 - Advanced print production and Print Basket
+- Barcode formats and advanced signed/time-bounded digital credentials
+- Designer v2 remaining fidelity and contract hardening
 - Teacher and non-teaching staff workflows
 - School collaboration
 - Photo Studio
