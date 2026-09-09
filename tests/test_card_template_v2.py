@@ -186,6 +186,14 @@ def test_system_and_custom_bindings_are_accepted_safely():
         {"text": "CAMPUS-ID:123"},
         {"field": "admission_no", "prefix": "CAMPUS-ID:"},
         {"field_uuid": str(uuid4()), "fallback": "No value"},
+        {
+            "fields": [
+                {"field": "full_name", "label": "Full name"},
+                {"field": "admission_no", "label": "Admission number"},
+                {"field_uuid": str(uuid4()), "label": "House"},
+            ],
+            "format": "json",
+        },
     ],
 )
 def test_qr_static_system_and_custom_payloads_round_trip(data):
@@ -202,6 +210,7 @@ def test_qr_static_system_and_custom_payloads_round_trip(data):
     [
         ({}, "exactly one"),
         ({"text": "one", "field": "admission_no"}, "exactly one"),
+        ({"text": "one", "fields": [{"field": "full_name"}]}, "exactly one"),
         ({"text": "   "}, "cannot be blank"),
         ({"field": "password_hash"}, "unknown QR field"),
         ({"field": []}, "unknown QR field"),
@@ -247,6 +256,47 @@ def test_qr_fixed_content_has_a_utf8_byte_limit():
     document["elements"].append(_qr_element(data={"text": "é" * 501}))
 
     with pytest.raises(ValidationError, match="1000 UTF-8 bytes"):
+        CardTemplateUpdate(name="QR card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("fields", "format", "message"),
+    [
+        ([], "json", "1 through 20"),
+        ([{"field": "full_name"}] * 21, "json", "1 through 20"),
+        (["full_name"], "json", "must be an object"),
+        ([{}], "json", "exactly one"),
+        ([{"field": "full_name", "field_uuid": str(uuid4())}], "json", "exactly one"),
+        ([{"field": "password_hash"}], "json", "unknown QR field"),
+        ([{"field_uuid": "bad"}], "json", "must be a UUID"),
+        ([{"field": "full_name"}, {"field": "full_name"}], "json", "unique"),
+        ([{"field": "full_name", "extra": "x"}], "json", "unsupported"),
+        ([{"field": "full_name"}], "xml", "format is unsupported"),
+    ],
+)
+def test_qr_multiple_field_contract_is_strict(fields, format, message):
+    document = _document()
+    document["elements"].append(
+        _qr_element(data={"fields": fields, "format": format})
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="QR card", design=document)
+
+
+def test_structured_json_qr_rejects_ambiguous_wrapping_text():
+    document = _document()
+    document["elements"].append(
+        _qr_element(
+            data={
+                "fields": [{"field": "full_name", "label": "Full name"}],
+                "format": "json",
+                "prefix": "Student:",
+            }
+        )
+    )
+
+    with pytest.raises(ValidationError, match="cannot use prefix or suffix"):
         CardTemplateUpdate(name="QR card", design=document)
 
 

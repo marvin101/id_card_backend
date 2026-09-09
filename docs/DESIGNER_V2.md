@@ -42,7 +42,7 @@ and must be unique within the document. Known properties are scoped by type:
 | `student_photo`, `school_logo` | none | `fit`, `border_color`, `border_width`, `corner_radius` |
 | `rectangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
 | `line` | none | `color`, `border_width` |
-| `qr_code` | exactly one of `text`, supported `field`, or canonical `field_uuid` | `color`, `background_color`, `quiet_zone`, `error_correction` |
+| `qr_code` | exactly one of `text`, supported `field`, canonical `field_uuid`, or `fields` | `color`, `background_color`, `quiet_zone`, `error_correction` |
 
 QR elements are square and at least 12 mm on each side. `prefix`, `suffix`,
 `fallback`, and `label` are optional data properties. Foreground and background
@@ -50,6 +50,13 @@ must be distinct opaque colours, `quiet_zone` is 0–5 mm, and
 `error_correction` is `low`, `medium`, `quartile`, or `high`. Fixed QR content
 is limited to 1000 UTF-8 bytes; Flutter applies the same limit to resolved
 per-student content before bulk PDF generation.
+
+`fields` contains 1–20 unique system/custom bindings and keeps custom fields
+scoped by UUID. Multi-field payloads default to compact `json`, whose stable
+keys are system field names and `custom:<field_uuid>` for custom values. The
+alternative `labeled_text` format emits one `Label: value` line per selected
+field. JSON payloads cannot use a prefix or suffix, preserving valid structured
+data when the code is scanned.
 
 The editor-supported bounds are `font_size <= 20`, `border_width <= 10`,
 `corner_radius <= 30`, and `max_lines <= 100`; an explicitly configured line

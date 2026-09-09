@@ -16,6 +16,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
   and editor-aligned numeric bounds.
 - Added a validated Designer v2 `qr_code` element contract for static, system-field,
   and custom-field content with print-safe geometry and styling limits.
+- Added scoped multi-field QR payloads with unique bindings and structured JSON
+  or labeled-text output.
 
 ## [0.7.0] - 2026-09-02
 

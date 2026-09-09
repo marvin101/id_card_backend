@@ -85,7 +85,7 @@ _STYLE_KEYS_BY_TYPE = {
     "line": {"color", "border_width"},
     "qr_code": {"color", "background_color", "quiet_zone", "error_correction"},
 }
-_KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {"field", "field_uuid"}
+_KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {"field", "field_uuid", "fields", "format"}
 _DATA_KEYS_BY_TYPE = {
     "text": {"text", "prefix", "suffix"},
     "bound_text": {"field", "prefix", "suffix", "fallback", "label"},
@@ -104,6 +104,8 @@ _DATA_KEYS_BY_TYPE = {
         "text",
         "field",
         "field_uuid",
+        "fields",
+        "format",
         "prefix",
         "suffix",
         "fallback",
@@ -341,10 +343,15 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                     f"{prefix}.data.field_uuid must be a canonical UUID"
                 )
         if element_type == "qr_code":
-            selectors = [key for key in ("text", "field", "field_uuid") if key in data]
+            selectors = [
+                key
+                for key in ("text", "field", "field_uuid", "fields")
+                if key in data
+            ]
             if len(selectors) != 1:
                 raise ValueError(
-                    f"{prefix} QR data must define exactly one of text, field, or field_uuid"
+                    f"{prefix} QR data must define exactly one of text, field, "
+                    "field_uuid, or fields"
                 )
             selector = selectors[0]
             if selector == "text" and not data["text"].strip():
@@ -366,10 +373,90 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(
                         f"{prefix}.data.field_uuid must be a canonical UUID"
                     )
+            if selector == "fields":
+                fields = data["fields"]
+                if not isinstance(fields, list) or not 1 <= len(fields) <= 20:
+                    raise ValueError(
+                        f"{prefix}.data.fields must contain 1 through 20 bindings"
+                    )
+                identities: set[tuple[str, str]] = set()
+                for field_index, binding in enumerate(fields):
+                    binding_prefix = f"{prefix}.data.fields[{field_index}]"
+                    if not isinstance(binding, dict):
+                        raise ValueError(f"{binding_prefix} must be an object")
+                    unsupported = set(binding) - {
+                        "field",
+                        "field_uuid",
+                        "label",
+                        "fallback",
+                    }
+                    if unsupported:
+                        key = sorted(unsupported)[0]
+                        raise ValueError(f"{binding_prefix}.{key} is unsupported")
+                    for key in ("label", "fallback"):
+                        value = binding.get(key)
+                        if value is not None and not isinstance(value, str):
+                            raise ValueError(f"{binding_prefix}.{key} must be a string")
+                    binding_selectors = [
+                        key for key in ("field", "field_uuid") if key in binding
+                    ]
+                    if len(binding_selectors) != 1:
+                        raise ValueError(
+                            f"{binding_prefix} must define exactly one of field or field_uuid"
+                        )
+                    binding_selector = binding_selectors[0]
+                    binding_value = binding[binding_selector]
+                    if binding_selector == "field":
+                        if (
+                            not isinstance(binding_value, str)
+                            or binding_value not in SUPPORTED_BINDING_FIELDS
+                        ):
+                            raise ValueError(
+                                f"{binding_prefix} has an unknown QR field binding"
+                            )
+                    else:
+                        try:
+                            parsed_uuid = (
+                                UUID(binding_value)
+                                if isinstance(binding_value, str)
+                                else None
+                            )
+                        except (TypeError, ValueError):
+                            raise ValueError(
+                                f"{binding_prefix}.field_uuid must be a UUID"
+                            ) from None
+                        if parsed_uuid is None or str(parsed_uuid) != binding_value:
+                            raise ValueError(
+                                f"{binding_prefix}.field_uuid must be a canonical UUID"
+                            )
+                    identity = (binding_selector, binding_value)
+                    if identity in identities:
+                        raise ValueError(f"{prefix}.data.fields must be unique")
+                    identities.add(identity)
+                qr_format = data.get("format", "json")
+                if not isinstance(qr_format, str) or qr_format not in {
+                    "json",
+                    "labeled_text",
+                }:
+                    raise ValueError(f"{prefix}.data.format is unsupported")
+                if qr_format == "json" and any(
+                    data.get(key, "") for key in ("prefix", "suffix")
+                ):
+                    raise ValueError(
+                        f"{prefix} JSON QR data cannot use prefix or suffix"
+                    )
+            elif "format" in data:
+                raise ValueError(f"{prefix}.data.format requires fields")
             fixed_bytes = sum(
                 len(data.get(key, "").encode("utf-8"))
                 for key in ("text", "prefix", "suffix", "fallback")
             )
+            if selector == "fields":
+                fixed_bytes += sum(
+                    len(binding.get(key, "").encode("utf-8"))
+                    for binding in data["fields"]
+                    for key in ("label", "fallback")
+                )
             if fixed_bytes > 1000:
                 raise ValueError(
                     f"{prefix} QR fixed content must be at most 1000 UTF-8 bytes"
