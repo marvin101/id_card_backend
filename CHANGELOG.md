@@ -14,6 +14,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 - Added orientation-consistency and physical-size bounds for custom Designer v2 canvases.
 - Added type-specific Designer v2 data/style validation, deterministic layer indices,
   and editor-aligned numeric bounds.
+- Added a validated Designer v2 `qr_code` element contract for static, system-field,
+  and custom-field content with print-safe geometry and styling limits.
 
 ## [0.7.0] - 2026-09-02
 

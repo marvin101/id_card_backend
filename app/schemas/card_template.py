@@ -15,6 +15,7 @@ SUPPORTED_ELEMENT_TYPES = {
     "school_logo",
     "rectangle",
     "line",
+    "qr_code",
 }
 SUPPORTED_BINDING_FIELDS = {
     "full_name",
@@ -58,6 +59,9 @@ _KNOWN_STYLE_KEYS = {
     "max_lines",
     "alignment",
     "fit",
+    "background_color",
+    "quiet_zone",
+    "error_correction",
 }
 _STYLE_KEYS_BY_TYPE = {
     "text": {"color", "font_size", "font_weight", "max_lines", "alignment"},
@@ -79,6 +83,7 @@ _STYLE_KEYS_BY_TYPE = {
     "school_logo": {"fit", "border_color", "border_width", "corner_radius"},
     "rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
     "line": {"color", "border_width"},
+    "qr_code": {"color", "background_color", "quiet_zone", "error_correction"},
 }
 _KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {"field", "field_uuid"}
 _DATA_KEYS_BY_TYPE = {
@@ -95,6 +100,15 @@ _DATA_KEYS_BY_TYPE = {
     "school_logo": set(),
     "rectangle": set(),
     "line": set(),
+    "qr_code": {
+        "text",
+        "field",
+        "field_uuid",
+        "prefix",
+        "suffix",
+        "fallback",
+        "label",
+    },
 }
 
 
@@ -182,6 +196,13 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"{prefix}.{key} is outside the supported range")
             if key == "rotation" and abs(value) > 360:
                 raise ValueError(f"{prefix}.rotation is outside the supported range")
+        if element_type == "qr_code":
+            qr_width = float(element["width"])
+            qr_height = float(element["height"])
+            if qr_width < 12 or qr_height < 12:
+                raise ValueError(f"{prefix} QR dimensions must be at least 12 millimetres")
+            if not math.isclose(qr_width, qr_height, abs_tol=0.01):
+                raise ValueError(f"{prefix} QR dimensions must be square")
         if not float(element["z_index"]).is_integer():
             raise ValueError(f"{prefix}.z_index must be an integer")
         if abs(float(element["z_index"])) > 10000:
@@ -261,6 +282,38 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{prefix}.style.alignment is unsupported")
         if style.get("fit") not in {None, "cover", "contain"}:
             raise ValueError(f"{prefix}.style.fit is unsupported")
+        if element_type == "qr_code":
+            foreground = style.get("color", "#000000")
+            qr_background = style.get("background_color", "#FFFFFF")
+            for key, color in (
+                ("color", foreground),
+                ("background_color", qr_background),
+            ):
+                if not isinstance(color, str) or not re.fullmatch(
+                    r"#[0-9a-fA-F]{6}", color
+                ):
+                    raise ValueError(
+                        f"{prefix}.style.{key} must be an opaque hex color"
+                    )
+            if foreground.casefold() == qr_background.casefold():
+                raise ValueError(
+                    f"{prefix} QR foreground and background colors must differ"
+                )
+            quiet_zone = _optional_finite_number(
+                style, "quiet_zone", f"{prefix}.style.quiet_zone", minimum=0
+            )
+            if quiet_zone is not None and quiet_zone > 5:
+                raise ValueError(f"{prefix}.style.quiet_zone must be at most 5")
+            if style.get("error_correction") not in (
+                None,
+                "low",
+                "medium",
+                "quartile",
+                "high",
+            ):
+                raise ValueError(
+                    f"{prefix}.style.error_correction is unsupported"
+                )
         for key, value in data.items():
             if isinstance(value, str) and len(value) > 2000:
                 raise ValueError(f"{prefix}.data.{key} is too long")
@@ -271,7 +324,10 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{prefix}.data.text is required for text")
         if (
             element_type == "bound_text"
-            and data.get("field") not in SUPPORTED_BINDING_FIELDS
+            and (
+                not isinstance(data.get("field"), str)
+                or data["field"] not in SUPPORTED_BINDING_FIELDS
+            )
         ):
             raise ValueError(f"{prefix} has an unknown student field binding")
         if element_type == "custom_field_text":
@@ -283,6 +339,40 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             if parsed_uuid is None or str(parsed_uuid) != field_uuid:
                 raise ValueError(
                     f"{prefix}.data.field_uuid must be a canonical UUID"
+                )
+        if element_type == "qr_code":
+            selectors = [key for key in ("text", "field", "field_uuid") if key in data]
+            if len(selectors) != 1:
+                raise ValueError(
+                    f"{prefix} QR data must define exactly one of text, field, or field_uuid"
+                )
+            selector = selectors[0]
+            if selector == "text" and not data["text"].strip():
+                raise ValueError(f"{prefix}.data.text cannot be blank")
+            if selector == "field" and (
+                not isinstance(data["field"], str)
+                or data["field"] not in SUPPORTED_BINDING_FIELDS
+            ):
+                raise ValueError(f"{prefix} has an unknown QR field binding")
+            if selector == "field_uuid":
+                field_uuid = data["field_uuid"]
+                try:
+                    parsed_uuid = UUID(field_uuid) if isinstance(field_uuid, str) else None
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"{prefix}.data.field_uuid must be a UUID"
+                    ) from None
+                if parsed_uuid is None or str(parsed_uuid) != field_uuid:
+                    raise ValueError(
+                        f"{prefix}.data.field_uuid must be a canonical UUID"
+                    )
+            fixed_bytes = sum(
+                len(data.get(key, "").encode("utf-8"))
+                for key in ("text", "prefix", "suffix", "fallback")
+            )
+            if fixed_bytes > 1000:
+                raise ValueError(
+                    f"{prefix} QR fixed content must be at most 1000 UTF-8 bytes"
                 )
     settings = design.get("settings", {})
     if not isinstance(settings, dict):

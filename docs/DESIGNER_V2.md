@@ -27,8 +27,8 @@ the same values with `PdfPageFormat.mm`. Zoom never changes saved geometry.
 Every element has `id`, `type`, `x`, `y`, `width`, `height`, `rotation`,
 `z_index`, `locked`, `visible`, `style`, and `data`. Supported types are
 `text`, `bound_text`, `custom_field_text`, `student_photo`, `school_logo`,
-`rectangle`, and `line`. System text uses `data.field`; custom text uses the
-stable `data.field_uuid` rather than a mutable label.
+`rectangle`, `line`, and `qr_code`. System bindings use `data.field`; custom
+bindings use the stable `data.field_uuid` rather than a mutable label.
 
 Element IDs cannot contain surrounding whitespace and must be unique. Layering
 is explicit: every `z_index` must be an integer from `-10000` through `10000`
@@ -42,6 +42,14 @@ and must be unique within the document. Known properties are scoped by type:
 | `student_photo`, `school_logo` | none | `fit`, `border_color`, `border_width`, `corner_radius` |
 | `rectangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
 | `line` | none | `color`, `border_width` |
+| `qr_code` | exactly one of `text`, supported `field`, or canonical `field_uuid` | `color`, `background_color`, `quiet_zone`, `error_correction` |
+
+QR elements are square and at least 12 mm on each side. `prefix`, `suffix`,
+`fallback`, and `label` are optional data properties. Foreground and background
+must be distinct opaque colours, `quiet_zone` is 0–5 mm, and
+`error_correction` is `low`, `medium`, `quartile`, or `high`. Fixed QR content
+is limited to 1000 UTF-8 bytes; Flutter applies the same limit to resolved
+per-student content before bulk PDF generation.
 
 The editor-supported bounds are `font_size <= 20`, `border_width <= 10`,
 `corner_radius <= 30`, and `max_lines <= 100`; an explicitly configured line

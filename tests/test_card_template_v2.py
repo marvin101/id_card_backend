@@ -51,6 +51,29 @@ def _document():
     }
 
 
+def _qr_element(data=None, style=None):
+    return {
+        "id": "student-qr",
+        "type": "qr_code",
+        "x": 60.0,
+        "y": 30.0,
+        "width": 18.0,
+        "height": 18.0,
+        "rotation": 0.0,
+        "z_index": 4,
+        "locked": False,
+        "visible": True,
+        "style": {
+            "color": "#000000",
+            "background_color": "#FFFFFF",
+            "quiet_zone": 1.0,
+            "error_correction": "medium",
+            **(style or {}),
+        },
+        "data": data if data is not None else {"text": "CAMPUS-ID:123"},
+    }
+
+
 def test_legacy_v1_template_remains_valid():
     legacy = {"version": 1, "school_title": "Example", "primary_color": "#242c61"}
     assert validate_design_document(legacy) is legacy
@@ -155,6 +178,76 @@ def test_geometry_outside_flutter_supported_range_is_rejected(key, value):
 def test_system_and_custom_bindings_are_accepted_safely():
     payload = CardTemplateUpdate(name="Card", design=_document())
     assert payload.design["elements"][0]["data"]["field"] == "full_name"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"text": "CAMPUS-ID:123"},
+        {"field": "admission_no", "prefix": "CAMPUS-ID:"},
+        {"field_uuid": str(uuid4()), "fallback": "No value"},
+    ],
+)
+def test_qr_static_system_and_custom_payloads_round_trip(data):
+    document = _document()
+    document["elements"].append(_qr_element(data=data))
+
+    payload = CardTemplateUpdate(name="QR card", design=document)
+
+    assert payload.design["elements"][-1]["data"] == data
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        ({}, "exactly one"),
+        ({"text": "one", "field": "admission_no"}, "exactly one"),
+        ({"text": "   "}, "cannot be blank"),
+        ({"field": "password_hash"}, "unknown QR field"),
+        ({"field": []}, "unknown QR field"),
+        ({"field_uuid": "not-a-uuid"}, "must be a UUID"),
+        ({"field_uuid": "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}, "canonical UUID"),
+    ],
+)
+def test_qr_payload_selector_is_strict(data, message):
+    document = _document()
+    document["elements"].append(_qr_element(data=data))
+
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="QR card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"width": 11.9, "height": 11.9}, "at least 12"),
+        ({"width": 18, "height": 17}, "must be square"),
+        ({"style": {"color": "#00000080"}}, "opaque hex color"),
+        ({"style": {"background_color": "#000000"}}, "colors must differ"),
+        ({"style": {"quiet_zone": 5.1}}, "at most 5"),
+        ({"style": {"error_correction": "maximum"}}, "unsupported"),
+        ({"style": {"error_correction": []}}, "unsupported"),
+    ],
+)
+def test_qr_geometry_and_style_are_scannable(change, message):
+    document = _document()
+    element = _qr_element()
+    if "style" in change:
+        element["style"].update(change["style"])
+    else:
+        element.update(change)
+    document["elements"].append(element)
+
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="QR card", design=document)
+
+
+def test_qr_fixed_content_has_a_utf8_byte_limit():
+    document = _document()
+    document["elements"].append(_qr_element(data={"text": "é" * 501}))
+
+    with pytest.raises(ValidationError, match="1000 UTF-8 bytes"):
+        CardTemplateUpdate(name="QR card", design=document)
 
 
 def test_custom_binding_uuid_must_use_the_canonical_wire_format():
