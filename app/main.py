@@ -1,7 +1,8 @@
 import logging
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -26,9 +27,20 @@ from app.api.public_forms import management_router as public_form_management_rou
 logger = logging.getLogger(__name__)
 
 
-app = FastAPI(
+async def _internal_server_error_response(
+    _request: Request,
+    _exception: Exception,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
+
+
+api = FastAPI(
     title="CampusID API",
     version=__version__,
+    exception_handlers={500: _internal_server_error_response},
 )
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -36,39 +48,30 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount(
+api.mount(
     "/media",
     StaticFiles(directory=UPLOAD_DIR),
     name="media",
 )
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
-)
-
-app.include_router(auth_router)
-app.include_router(schools_router)
-app.include_router(academic_sessions_router)
-app.include_router(classes_router)
-app.include_router(sections_router)
-app.include_router(student_grid_router)
-app.include_router(students_router)
-app.include_router(card_templates_router)
-app.include_router(public_designs_router)
-app.include_router(student_fields_router)
-app.include_router(student_imports_router)
-app.include_router(bulk_student_photos_router)
-app.include_router(public_form_management_router)
-app.include_router(public_forms_router)
+api.include_router(auth_router)
+api.include_router(schools_router)
+api.include_router(academic_sessions_router)
+api.include_router(classes_router)
+api.include_router(sections_router)
+api.include_router(student_grid_router)
+api.include_router(students_router)
+api.include_router(card_templates_router)
+api.include_router(public_designs_router)
+api.include_router(student_fields_router)
+api.include_router(student_imports_router)
+api.include_router(bulk_student_photos_router)
+api.include_router(public_form_management_router)
+api.include_router(public_forms_router)
 # ==========================================================
 # Health Check
 # ==========================================================
 
-@app.get("/health")
+@api.get("/health")
 def root():
     return {
         "status": "ok",
@@ -77,7 +80,7 @@ def root():
         "health": "/health",
     }
 
-@app.get(
+@api.get(
     "/health/check",
     responses={503: {"description": "Database is unavailable."}},
 )
@@ -117,4 +120,18 @@ def health_check(
 # API Routers
 # ==========================================================
 
-app.include_router(users_router)
+api.include_router(users_router)
+
+# Keep CORS outside FastAPI's error middleware so even unexpected 500 responses
+# receive the browser-facing CORS headers. Expose the two FastAPI hooks used by
+# tests and API tooling while retaining the wrapped ASGI app as the Uvicorn entry.
+app = CORSMiddleware(
+    api,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
+app.dependency_overrides = api.dependency_overrides
+app.openapi = api.openapi

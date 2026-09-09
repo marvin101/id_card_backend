@@ -101,6 +101,23 @@ def test_database_health_is_503_without_leaking_exception_details(caplog):
     assert "database details" not in caplog.text
 
 
+def test_unhandled_server_error_is_safe_and_keeps_cors_headers():
+    origin = settings.cors_origin_list[0]
+
+    def unavailable_dependency():
+        raise RuntimeError("database provider secret detail")
+
+    app.dependency_overrides[get_db] = unavailable_dependency
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/health/check", headers={"Origin": origin})
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "provider secret detail" not in response.text
+
+
 def test_login_limit_uses_the_rightmost_trusted_forwarded_hop(monkeypatch):
     monkeypatch.setattr(settings, "auth_rate_limit_enabled", True)
     monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60)
