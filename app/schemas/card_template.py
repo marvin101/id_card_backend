@@ -47,6 +47,55 @@ SUPPORTED_BINDING_FIELDS = {
 }
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _TEXT_DATA_KEYS = {"text", "prefix", "suffix", "fallback", "label"}
+_KNOWN_STYLE_KEYS = {
+    "color",
+    "fill_color",
+    "border_color",
+    "border_width",
+    "corner_radius",
+    "font_size",
+    "font_weight",
+    "max_lines",
+    "alignment",
+    "fit",
+}
+_STYLE_KEYS_BY_TYPE = {
+    "text": {"color", "font_size", "font_weight", "max_lines", "alignment"},
+    "bound_text": {
+        "color",
+        "font_size",
+        "font_weight",
+        "max_lines",
+        "alignment",
+    },
+    "custom_field_text": {
+        "color",
+        "font_size",
+        "font_weight",
+        "max_lines",
+        "alignment",
+    },
+    "student_photo": {"fit", "border_color", "border_width", "corner_radius"},
+    "school_logo": {"fit", "border_color", "border_width", "corner_radius"},
+    "rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
+    "line": {"color", "border_width"},
+}
+_KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {"field", "field_uuid"}
+_DATA_KEYS_BY_TYPE = {
+    "text": {"text", "prefix", "suffix"},
+    "bound_text": {"field", "prefix", "suffix", "fallback", "label"},
+    "custom_field_text": {
+        "field_uuid",
+        "prefix",
+        "suffix",
+        "fallback",
+        "label",
+    },
+    "student_photo": set(),
+    "school_logo": set(),
+    "rectangle": set(),
+    "line": set(),
+}
 
 
 def _finite_number(value: Any, label: str) -> float:
@@ -72,6 +121,8 @@ def _optional_finite_number(
 def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
     """Validate stored v1 settings or the bounded Designer v2 document."""
     version = design.get("schema_version", design.get("version", 1))
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("card-template schema_version must be an integer")
     if version == 1:
         return design
     if version != 2:
@@ -102,17 +153,24 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(elements, list) or len(elements) > 250:
         raise ValueError("elements must be a list containing at most 250 items")
     identifiers: set[str] = set()
+    z_indices: set[int] = set()
     for index, element in enumerate(elements):
         prefix = f"elements[{index}]"
         if not isinstance(element, dict):
             raise ValueError(f"{prefix} must be an object")
         identifier = element.get("id")
-        if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 80:
+        if (
+            not isinstance(identifier, str)
+            or not identifier.strip()
+            or identifier != identifier.strip()
+            or len(identifier) > 80
+        ):
             raise ValueError(f"{prefix}.id must be a non-empty string")
         if identifier in identifiers:
             raise ValueError("element IDs must be unique")
         identifiers.add(identifier)
-        if element.get("type") not in SUPPORTED_ELEMENT_TYPES:
+        element_type = element.get("type")
+        if element_type not in SUPPORTED_ELEMENT_TYPES:
             raise ValueError(f"{prefix}.type is unsupported")
         for key in ("x", "y", "width", "height", "rotation", "z_index"):
             value = _finite_number(element.get(key), f"{prefix}.{key}")
@@ -128,27 +186,55 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{prefix}.z_index must be an integer")
         if abs(float(element["z_index"])) > 10000:
             raise ValueError(f"{prefix}.z_index is outside the supported range")
+        z_index = int(element["z_index"])
+        if z_index in z_indices:
+            raise ValueError("element z_index values must be unique")
+        z_indices.add(z_index)
         if not isinstance(element.get("locked"), bool) or not isinstance(element.get("visible"), bool):
             raise ValueError(f"{prefix}.locked and visible must be booleans")
         style = element.get("style", {})
         data = element.get("data", {})
         if not isinstance(style, dict) or not isinstance(data, dict):
             raise ValueError(f"{prefix}.style and data must be objects")
+        unsupported_style = (
+            _KNOWN_STYLE_KEYS & style.keys()
+        ) - _STYLE_KEYS_BY_TYPE[element_type]
+        if unsupported_style:
+            key = sorted(unsupported_style)[0]
+            raise ValueError(
+                f"{prefix}.style.{key} is unsupported for {element_type}"
+            )
+        unsupported_data = (
+            _KNOWN_DATA_KEYS & data.keys()
+        ) - _DATA_KEYS_BY_TYPE[element_type]
+        if unsupported_data:
+            key = sorted(unsupported_data)[0]
+            raise ValueError(
+                f"{prefix}.data.{key} is unsupported for {element_type}"
+            )
         for key in ("color", "fill_color", "border_color"):
             color = style.get(key)
             if color is not None and (not isinstance(color, str) or not _COLOR.fullmatch(color)):
                 raise ValueError(f"{prefix}.style.{key} must be a hex color")
-        _optional_finite_number(
+        border_width = _optional_finite_number(
             style, "border_width", f"{prefix}.style.border_width", minimum=0
         )
-        _optional_finite_number(
+        if border_width is not None and border_width > 10:
+            raise ValueError(f"{prefix}.style.border_width must be at most 10")
+        if element_type == "line" and border_width == 0:
+            raise ValueError(f"{prefix}.style.border_width must be positive for line")
+        corner_radius = _optional_finite_number(
             style, "corner_radius", f"{prefix}.style.corner_radius", minimum=0
         )
+        if corner_radius is not None and corner_radius > 30:
+            raise ValueError(f"{prefix}.style.corner_radius must be at most 30")
         font_size = _optional_finite_number(
             style, "font_size", f"{prefix}.style.font_size", minimum=0
         )
         if font_size == 0:
             raise ValueError(f"{prefix}.style.font_size must be positive")
+        if font_size is not None and font_size > 20:
+            raise ValueError(f"{prefix}.style.font_size must be at most 20")
         if "font_weight" in style:
             font_weight = _finite_number(
                 style["font_weight"], f"{prefix}.style.font_weight"
@@ -166,9 +252,10 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             max_lines = _finite_number(
                 style["max_lines"], f"{prefix}.style.max_lines"
             )
-            if not max_lines.is_integer() or max_lines < 1:
+            if not max_lines.is_integer() or not 1 <= max_lines <= 100:
                 raise ValueError(
-                    f"{prefix}.style.max_lines must be a positive integer"
+                    f"{prefix}.style.max_lines must be a positive integer "
+                    "no greater than 100"
                 )
         if style.get("alignment") not in {None, "left", "center", "right"}:
             raise ValueError(f"{prefix}.style.alignment is unsupported")
@@ -180,12 +267,14 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
         for key in _TEXT_DATA_KEYS & data.keys():
             if not isinstance(data[key], str):
                 raise ValueError(f"{prefix}.data.{key} must be a string")
+        if element_type == "text" and "text" not in data:
+            raise ValueError(f"{prefix}.data.text is required for text")
         if (
-            element["type"] == "bound_text"
+            element_type == "bound_text"
             and data.get("field") not in SUPPORTED_BINDING_FIELDS
         ):
             raise ValueError(f"{prefix} has an unknown student field binding")
-        if element["type"] == "custom_field_text":
+        if element_type == "custom_field_text":
             field_uuid = data.get("field_uuid")
             try:
                 parsed_uuid = UUID(field_uuid) if isinstance(field_uuid, str) else None

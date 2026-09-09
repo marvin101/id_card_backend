@@ -12,6 +12,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 - Added validation for versioned Designer v2 documents while preserving legacy v1 templates.
 - Added orientation-consistency and physical-size bounds for custom Designer v2 canvases.
+- Added type-specific Designer v2 data/style validation, deterministic layer indices,
+  and editor-aligned numeric bounds.
 
 ## [0.7.0] - 2026-09-02
 

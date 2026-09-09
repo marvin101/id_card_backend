@@ -88,11 +88,19 @@ def test_canvas_orientation_must_match_dimensions():
         CardTemplateUpdate(name="Invalid orientation", design=document)
 
 
-@pytest.mark.parametrize("version", [0, 3, "2"])
+@pytest.mark.parametrize("version", [0, 3])
 def test_invalid_schema_version_is_rejected(version):
     document = _document()
     document["schema_version"] = version
     with pytest.raises(ValidationError, match="Unsupported"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize("version", [True, False, "2", 2.0])
+def test_schema_version_must_be_an_integer_not_a_coercible_value(version):
+    document = _document()
+    document["schema_version"] = version
+    with pytest.raises(ValidationError, match="must be an integer"):
         CardTemplateUpdate(name="Card", design=document)
 
 
@@ -101,6 +109,20 @@ def test_duplicate_element_ids_are_rejected():
     duplicate = deepcopy(document["elements"][0])
     document["elements"].append(duplicate)
     with pytest.raises(ValidationError, match="unique"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+def test_duplicate_z_indices_are_rejected_for_deterministic_layering():
+    document = _document()
+    document["elements"][1]["z_index"] = document["elements"][0]["z_index"]
+    with pytest.raises(ValidationError, match="z_index values must be unique"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+def test_element_ids_cannot_have_surrounding_whitespace():
+    document = _document()
+    document["elements"][0]["id"] = " student-name "
+    with pytest.raises(ValidationError, match="non-empty string"):
         CardTemplateUpdate(name="Card", design=document)
 
 
@@ -172,6 +194,78 @@ def test_unknown_system_binding_is_rejected():
     document = _document()
     document["elements"][0]["data"]["field"] = "password_hash"
     with pytest.raises(ValidationError, match="unknown student field"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+def test_static_text_requires_text_data():
+    document = _document()
+    document["elements"][0]["type"] = "text"
+    document["elements"][0]["data"] = {}
+    with pytest.raises(ValidationError, match=r"data\.text is required"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("element_type", "style_key", "style_value"),
+    [
+        ("rectangle", "font_size", 3),
+        ("bound_text", "fit", "cover"),
+        ("line", "corner_radius", 1),
+        ("student_photo", "fill_color", "#FFFFFF"),
+    ],
+)
+def test_known_style_properties_are_scoped_to_supported_element_types(
+    element_type, style_key, style_value
+):
+    document = _document()
+    element = document["elements"][0]
+    element["type"] = element_type
+    element["style"] = {style_key: style_value}
+    element["data"] = {} if element_type not in {"bound_text"} else element["data"]
+    with pytest.raises(ValidationError, match=rf"style\.{style_key} is unsupported"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("element_type", "data"),
+    [
+        ("rectangle", {"text": "ignored"}),
+        ("student_photo", {"field": "full_name"}),
+        ("text", {"text": "Name", "field_uuid": str(uuid4())}),
+    ],
+)
+def test_known_data_properties_are_scoped_to_supported_element_types(
+    element_type, data
+):
+    document = _document()
+    document["elements"][0]["type"] = element_type
+    document["elements"][0]["style"] = {}
+    document["elements"][0]["data"] = data
+    with pytest.raises(ValidationError, match=r"data\..* is unsupported"):
+        CardTemplateUpdate(name="Card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("element_type", "style_key", "style_value", "message"),
+    [
+        ("bound_text", "font_size", 20.1, "at most 20"),
+        ("rectangle", "border_width", 10.1, "at most 10"),
+        ("rectangle", "corner_radius", 30.1, "at most 30"),
+        ("bound_text", "max_lines", 101, "no greater than 100"),
+        ("line", "border_width", 0, "positive for line"),
+    ],
+)
+def test_style_numbers_stay_within_editor_supported_limits(
+    element_type, style_key, style_value, message
+):
+    document = _document()
+    element = document["elements"][0]
+    element["type"] = element_type
+    element["style"] = {style_key: style_value}
+    element["data"] = (
+        {"field": "full_name"} if element_type == "bound_text" else {}
+    )
+    with pytest.raises(ValidationError, match=message):
         CardTemplateUpdate(name="Card", design=document)
 
 

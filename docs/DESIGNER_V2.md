@@ -30,6 +30,25 @@ Every element has `id`, `type`, `x`, `y`, `width`, `height`, `rotation`,
 `rectangle`, and `line`. System text uses `data.field`; custom text uses the
 stable `data.field_uuid` rather than a mutable label.
 
+Element IDs cannot contain surrounding whitespace and must be unique. Layering
+is explicit: every `z_index` must be an integer from `-10000` through `10000`
+and must be unique within the document. Known properties are scoped by type:
+
+| Element type | Required data | Supported known style properties |
+| --- | --- | --- |
+| `text` | `text` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
+| `bound_text` | supported `field` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
+| `custom_field_text` | canonical `field_uuid` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
+| `student_photo`, `school_logo` | none | `fit`, `border_color`, `border_width`, `corner_radius` |
+| `rectangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
+| `line` | none | `color`, `border_width` |
+
+The editor-supported bounds are `font_size <= 20`, `border_width <= 10`,
+`corner_radius <= 30`, and `max_lines <= 100`; an explicitly configured line
+width must be positive. Recognized data and style properties on incompatible
+element types are rejected because the renderers would ignore them. Unknown
+extension properties remain preserved for forward compatibility.
+
 The API continues to return stored v1 documents unchanged. Flutter recognizes
 the absence of `schema_version: 2`, converts known v1 settings into a
 deterministic in-memory v2 layout, and retains the old settings under named
