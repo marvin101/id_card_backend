@@ -5,7 +5,7 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 ## Current release
 
 - **CampusID v0.8.0** — the Designer v2 and secure student-verification release.
-- Adds validated Designer v2 persistence, scoped QR payloads, revocable verification links, school-controlled public disclosure, and hardened anonymous verification reads.
+- Adds validated Designer v2 persistence, scoped QR and barcode payloads, revocable verification links, school-controlled public disclosure, and hardened anonymous verification reads.
 - Includes the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, dynamic student fields, and card/PDF workflows from earlier milestones. CampusID remains pre-1.0 while advanced print production and other roadmap modules continue to mature.
 
 ## Architecture
@@ -47,6 +47,7 @@ The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage
 - Per-school Card Designer template storage
 - CORS, request-size controls, authentication/public-route throttling, and health endpoints
 - Revocable public student-verification links with school-controlled disclosure
+- Validated Code 128, Code 39, EAN-13, and Data Matrix Designer elements with scoped bindings
 
 ## Authorization model
 
@@ -329,7 +330,8 @@ The current release is `0.8.0`: `0.6.x` represented Public Forms, `0.7.0` added 
 ## Roadmap
 
 - Advanced print production and Print Basket (duplex output, production calibration, and reusable client-side print presets complete)
-- Barcode formats and advanced signed/time-bounded digital credentials
+- Barcode formats (Code 128, Code 39, EAN-13, and Data Matrix complete)
+- Advanced signed/time-bounded digital credentials
 - Designer v2 remaining fidelity and contract hardening
 - Teacher and non-teaching staff workflows
 - School collaboration

@@ -33,7 +33,7 @@ an explicit `null` removes it.
 Every element has `id`, `type`, `x`, `y`, `width`, `height`, `rotation`,
 `z_index`, `locked`, `visible`, `style`, and `data`. Supported types are
 `text`, `bound_text`, `custom_field_text`, `student_photo`, `school_logo`,
-`rectangle`, `line`, and `qr_code`. System bindings use `data.field`; custom
+`rectangle`, `line`, `qr_code`, and `barcode`. System bindings use `data.field`; custom
 bindings use the stable `data.field_uuid` rather than a mutable label.
 
 Element IDs cannot contain surrounding whitespace and must be unique. Layering
@@ -49,6 +49,7 @@ and must be unique within the document. Known properties are scoped by type:
 | `rectangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
 | `line` | none | `color`, `border_width` |
 | `qr_code` | exactly one of `text`, supported `field`, canonical `field_uuid`, or `fields` | `color`, `background_color`, `quiet_zone`, `error_correction` |
+| `barcode` | `symbology` plus exactly one of `text`, supported `field`, canonical `field_uuid`, or `fields` | `color`, `background_color`, `quiet_zone`, `show_text`, `font_size` |
 
 QR elements are square and at least 12 mm on each side. `prefix`, `suffix`,
 `fallback`, and `label` are optional data properties. Foreground and background
@@ -63,6 +64,15 @@ keys are system field names and `custom:<field_uuid>` for custom values. The
 alternative `labeled_text` format emits one `Label: value` line per selected
 field. JSON payloads cannot use a prefix or suffix, preserving valid structured
 data when the code is scanned.
+
+Barcode `symbology` is `code128`, `code39`, `ean13`, or `data_matrix`. Code 128,
+Code 39, and EAN-13 elements are at least 25 × 10 mm; Data Matrix is square and
+at least 12 mm per side. The same single/custom/multi-field binding contract is
+used as QR, except `verification_url` is deliberately unavailable. Static and
+resolved content is checked against format-specific character and byte limits;
+EAN-13 additionally requires 12 or 13 digits. One-dimensional formats may show
+a human-readable value, while Data Matrix does not. Flutter repeats resolved
+content validation before bulk PDF generation.
 
 `verification_url` is a special single-field QR binding. It resolves to the
 student's random public capability URL and is deliberately rejected for

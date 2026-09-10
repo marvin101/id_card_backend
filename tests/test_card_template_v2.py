@@ -74,6 +74,33 @@ def _qr_element(data=None, style=None):
     }
 
 
+def _barcode_element(symbology="code128", data=None, style=None):
+    return {
+        "id": "student-barcode",
+        "type": "barcode",
+        "x": 25.0,
+        "y": 30.0,
+        "width": 50.0 if symbology != "data_matrix" else 18.0,
+        "height": 14.0 if symbology != "data_matrix" else 18.0,
+        "rotation": 0.0,
+        "z_index": 4,
+        "locked": False,
+        "visible": True,
+        "style": {
+            "color": "#000000",
+            "background_color": "#FFFFFF",
+            "quiet_zone": 1.0,
+            "show_text": symbology != "data_matrix",
+            "font_size": 2.5,
+            **(style or {}),
+        },
+        "data": {
+            "symbology": symbology,
+            **(data if data is not None else {"text": "CAMPUS-ID:123"}),
+        },
+    }
+
+
 def test_legacy_v1_template_remains_valid():
     legacy = {"version": 1, "school_title": "Example", "primary_color": "#242c61"}
     assert validate_design_document(legacy) is legacy
@@ -299,6 +326,72 @@ def test_qr_fixed_content_has_a_utf8_byte_limit():
 
     with pytest.raises(ValidationError, match="1000 UTF-8 bytes"):
         CardTemplateUpdate(name="QR card", design=document)
+
+
+@pytest.mark.parametrize(
+    ("symbology", "data"),
+    [
+        ("code128", {"text": "CAMPUS-ID:123"}),
+        ("code39", {"text": "CAMPUS-ID 123"}),
+        ("ean13", {"text": "5901234123457"}),
+        ("data_matrix", {"text": "Student: आशा"}),
+        ("code128", {"field": "admission_no", "prefix": "ID:"}),
+        (
+            "data_matrix",
+            {
+                "fields": [
+                    {"field": "full_name", "label": "Full name"},
+                    {"field": "admission_no", "label": "Admission"},
+                ],
+                "format": "json",
+            },
+        ),
+    ],
+)
+def test_barcode_formats_and_binding_sources_round_trip(symbology, data):
+    document = _document()
+    document["elements"].append(_barcode_element(symbology, data=data))
+
+    payload = CardTemplateUpdate(name="Barcode card", design=document)
+
+    assert payload.design["elements"][-1]["data"]["symbology"] == symbology
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"data": {"symbology": "upc", "text": "123"}}, "symbology is unsupported"),
+        ({"data": {"symbology": "ean13", "text": "ABC"}}, "12 or 13 digits"),
+        ({"data": {"symbology": "code39", "text": "lowercase"}}, "unsupported characters"),
+        ({"data": {"symbology": "code128", "text": "é"}}, "printable ASCII"),
+        ({"width": 24.9}, "at least 25 by 10"),
+        (
+            {"symbology": "data_matrix", "width": 18, "height": 17},
+            "must be square",
+        ),
+        (
+            {"symbology": "data_matrix", "style": {"show_text": True}},
+            "unsupported for Data Matrix",
+        ),
+        ({"style": {"show_text": "yes"}}, "must be a boolean"),
+        ({"data": {"symbology": "code128", "field": "verification_url"}}, "unknown barcode field"),
+    ],
+)
+def test_barcode_contract_rejects_invalid_format_content_and_geometry(change, message):
+    document = _document()
+    symbology = change.get("symbology", "code128")
+    element = _barcode_element(symbology)
+    if "data" in change:
+        element["data"] = change["data"]
+    if "style" in change:
+        element["style"].update(change["style"])
+    for key in ("width", "height"):
+        if key in change:
+            element[key] = change[key]
+    document["elements"].append(element)
+
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="Barcode card", design=document)
 
 
 @pytest.mark.parametrize(

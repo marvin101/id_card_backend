@@ -16,6 +16,7 @@ SUPPORTED_ELEMENT_TYPES = {
     "rectangle",
     "line",
     "qr_code",
+    "barcode",
 }
 SUPPORTED_BINDING_FIELDS = {
     "full_name",
@@ -63,6 +64,7 @@ _KNOWN_STYLE_KEYS = {
     "background_color",
     "quiet_zone",
     "error_correction",
+    "show_text",
 }
 _STYLE_KEYS_BY_TYPE = {
     "text": {"color", "font_size", "font_weight", "max_lines", "alignment"},
@@ -85,8 +87,15 @@ _STYLE_KEYS_BY_TYPE = {
     "rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
     "line": {"color", "border_width"},
     "qr_code": {"color", "background_color", "quiet_zone", "error_correction"},
+    "barcode": {"color", "background_color", "quiet_zone", "show_text", "font_size"},
 }
-_KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {"field", "field_uuid", "fields", "format"}
+_KNOWN_DATA_KEYS = _TEXT_DATA_KEYS | {
+    "field",
+    "field_uuid",
+    "fields",
+    "format",
+    "symbology",
+}
 _DATA_KEYS_BY_TYPE = {
     "text": {"text", "prefix", "suffix"},
     "bound_text": {"field", "prefix", "suffix", "fallback", "label"},
@@ -111,6 +120,18 @@ _DATA_KEYS_BY_TYPE = {
         "suffix",
         "fallback",
         "label",
+    },
+    "barcode": {
+        "text",
+        "field",
+        "field_uuid",
+        "fields",
+        "format",
+        "prefix",
+        "suffix",
+        "fallback",
+        "label",
+        "symbology",
     },
 }
 
@@ -259,6 +280,10 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{prefix}.style.font_size must be positive")
         if font_size is not None and font_size > 20:
             raise ValueError(f"{prefix}.style.font_size must be at most 20")
+        if element_type == "barcode" and font_size is not None and font_size > 6:
+            raise ValueError(
+                f"{prefix}.style.font_size must be at most 6 for barcode text"
+            )
         if "font_weight" in style:
             font_weight = _finite_number(
                 style["font_weight"], f"{prefix}.style.font_weight"
@@ -285,12 +310,12 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"{prefix}.style.alignment is unsupported")
         if style.get("fit") not in {None, "cover", "contain"}:
             raise ValueError(f"{prefix}.style.fit is unsupported")
-        if element_type == "qr_code":
+        if element_type in {"qr_code", "barcode"}:
             foreground = style.get("color", "#000000")
-            qr_background = style.get("background_color", "#FFFFFF")
+            symbol_background = style.get("background_color", "#FFFFFF")
             for key, color in (
                 ("color", foreground),
-                ("background_color", qr_background),
+                ("background_color", symbol_background),
             ):
                 if not isinstance(color, str) or not re.fullmatch(
                     r"#[0-9a-fA-F]{6}", color
@@ -298,16 +323,16 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(
                         f"{prefix}.style.{key} must be an opaque hex color"
                     )
-            if foreground.casefold() == qr_background.casefold():
+            if foreground.casefold() == symbol_background.casefold():
                 raise ValueError(
-                    f"{prefix} QR foreground and background colors must differ"
+                    f"{prefix} symbol foreground and background colors must differ"
                 )
             quiet_zone = _optional_finite_number(
                 style, "quiet_zone", f"{prefix}.style.quiet_zone", minimum=0
             )
             if quiet_zone is not None and quiet_zone > 5:
                 raise ValueError(f"{prefix}.style.quiet_zone must be at most 5")
-            if style.get("error_correction") not in (
+            if element_type == "qr_code" and style.get("error_correction") not in (
                 None,
                 "low",
                 "medium",
@@ -317,6 +342,10 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(
                     f"{prefix}.style.error_correction is unsupported"
                 )
+            if element_type == "barcode" and "show_text" in style and not isinstance(
+                style["show_text"], bool
+            ):
+                raise ValueError(f"{prefix}.style.show_text must be a boolean")
         for key, value in data.items():
             if isinstance(value, str) and len(value) > 2000:
                 raise ValueError(f"{prefix}.data.{key} is too long")
@@ -343,7 +372,29 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(
                     f"{prefix}.data.field_uuid must be a canonical UUID"
                 )
-        if element_type == "qr_code":
+        if element_type in {"qr_code", "barcode"}:
+            kind = "QR" if element_type == "qr_code" else "barcode"
+            if element_type == "barcode":
+                symbology = data.get("symbology")
+                if symbology not in {"code128", "code39", "ean13", "data_matrix"}:
+                    raise ValueError(f"{prefix}.data.symbology is unsupported")
+                symbol_width = float(element["width"])
+                symbol_height = float(element["height"])
+                if symbology == "data_matrix":
+                    if symbol_width < 12 or symbol_height < 12:
+                        raise ValueError(
+                            f"{prefix} Data Matrix dimensions must be at least 12 millimetres"
+                        )
+                    if not math.isclose(symbol_width, symbol_height, abs_tol=0.01):
+                        raise ValueError(f"{prefix} Data Matrix dimensions must be square")
+                    if style.get("show_text") is True:
+                        raise ValueError(
+                            f"{prefix}.style.show_text is unsupported for Data Matrix"
+                        )
+                elif symbol_width < 25 or symbol_height < 10:
+                    raise ValueError(
+                        f"{prefix} one-dimensional barcode must be at least 25 by 10 millimetres"
+                    )
             selectors = [
                 key
                 for key in ("text", "field", "field_uuid", "fields")
@@ -351,7 +402,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
             ]
             if len(selectors) != 1:
                 raise ValueError(
-                    f"{prefix} QR data must define exactly one of text, field, "
+                    f"{prefix} {kind} data must define exactly one of text, field, "
                     "field_uuid, or fields"
                 )
             selector = selectors[0]
@@ -359,9 +410,14 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(f"{prefix}.data.text cannot be blank")
             if selector == "field" and (
                 not isinstance(data["field"], str)
-                or data["field"] not in SUPPORTED_QR_BINDING_FIELDS
+                or data["field"]
+                not in (
+                    SUPPORTED_QR_BINDING_FIELDS
+                    if element_type == "qr_code"
+                    else SUPPORTED_BINDING_FIELDS
+                )
             ):
-                raise ValueError(f"{prefix} has an unknown QR field binding")
+                raise ValueError(f"{prefix} has an unknown {kind} field binding")
             if selector == "field_uuid":
                 field_uuid = data["field_uuid"]
                 try:
@@ -413,7 +469,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                             or binding_value not in SUPPORTED_BINDING_FIELDS
                         ):
                             raise ValueError(
-                                f"{binding_prefix} has an unknown QR field binding"
+                                f"{binding_prefix} has an unknown {kind} field binding"
                             )
                     else:
                         try:
@@ -444,7 +500,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                     data.get(key, "") for key in ("prefix", "suffix")
                 ):
                     raise ValueError(
-                        f"{prefix} JSON QR data cannot use prefix or suffix"
+                        f"{prefix} JSON {kind} data cannot use prefix or suffix"
                     )
             elif "format" in data:
                 raise ValueError(f"{prefix}.data.format requires fields")
@@ -458,10 +514,41 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                     for binding in data["fields"]
                     for key in ("label", "fallback")
                 )
-            if fixed_bytes > 1000:
+            maximum_bytes = 1000
+            if element_type == "barcode":
+                maximum_bytes = {
+                    "code128": 80,
+                    "code39": 40,
+                    "ean13": 13,
+                    "data_matrix": 1000,
+                }[symbology]
+            if fixed_bytes > maximum_bytes:
                 raise ValueError(
-                    f"{prefix} QR fixed content must be at most 1000 UTF-8 bytes"
+                    f"{prefix} {kind} fixed content must be at most "
+                    f"{maximum_bytes} UTF-8 bytes"
                 )
+            if element_type == "barcode" and selector == "text":
+                fixed_value = (
+                    f"{data.get('prefix', '')}{data['text']}{data.get('suffix', '')}"
+                )
+                if symbology == "ean13" and not re.fullmatch(
+                    r"\d{12,13}", fixed_value
+                ):
+                    raise ValueError(
+                        f"{prefix} EAN-13 fixed content must contain 12 or 13 digits"
+                    )
+                if symbology == "code39" and not re.fullmatch(
+                    r"[0-9A-Z .\-$/+%]+", fixed_value
+                ):
+                    raise ValueError(
+                        f"{prefix} Code 39 fixed content contains unsupported characters"
+                    )
+                if symbology == "code128" and not all(
+                    32 <= ord(character) <= 126 for character in fixed_value
+                ):
+                    raise ValueError(
+                        f"{prefix} Code 128 fixed content must use printable ASCII"
+                    )
     settings = design.get("settings", {})
     if not isinstance(settings, dict):
         raise ValueError("settings must be an object")

@@ -13,6 +13,9 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 - Added optional back-side Designer documents to card templates and public
   design previews, with independent v2 validation and matching front/back
   canvas dimensions for duplex alignment.
+- Added a validated Designer v2 `barcode` contract for Code 128, Code 39,
+  EAN-13, and Data Matrix, including static, single-field, custom-field, and
+  scoped multi-field payloads plus format-specific content and geometry limits.
 
 ### Changed
 
