@@ -32,7 +32,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Preview and commit a spreadsheet import; preview and commit a bulk-photo ZIP; verify failure cleanup and school/user scoping.
 - [ ] Open Designer, load the saved template, edit, save, reload, and compare the persisted document exactly.
 - [ ] Open the same template in two sessions; save session one, confirm session two receives `409` with local edits intact, then reload latest.
-- [ ] Open Cards and verify single-card preview. Export filtered and selected-only PDFs, including missing-photo warnings and both portrait and landscape templates; confirm exact page count.
+- [ ] Open Cards and verify single-card preview. Export filtered, selected-only, and Print Basket PDFs, including missing-photo warnings and both portrait and landscape templates. Verify one-card pages plus A4/Letter portrait/landscape sheets, margins, spacing, optional crop marks, exact card size, and calculated sheet count.
 - [ ] Confirm failed export does not change print lifecycle. After a successful print action, verify print count and audit history update only for the confirmed scope.
 - [ ] Enable public sharing, open the link anonymously, and confirm the browser requests no student endpoint. Disable it and confirm generic `404`; regenerate and confirm only the new token works; repeat with an inactive school.
 - [ ] Confirm anonymous template mutation returns `401` and a non-admin share-management request returns `403`.
