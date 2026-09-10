@@ -310,13 +310,71 @@ def test_card_template_put_updates_one_school_template_and_returns_flutter_shape
         )
 
     assert response.status_code == 200
-    assert set(response.json()) == {"uuid", "name", "design", "updated_at"}
+    assert set(response.json()) == {
+        "uuid",
+        "name",
+        "design",
+        "back_design",
+        "updated_at",
+    }
     assert response.json()["name"] == "Authoritative name"
     assert response.json()["design"] == replacement
+    assert response.json()["back_design"] is None
     assert template.name == "Authoritative name"
     assert template.design == replacement
     assert session.template is template
     assert session.commits == 1
+
+
+def test_card_template_back_design_updates_and_legacy_omission_preserves_it():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id,
+        school_id=school.id,
+        role="school_admin",
+    )
+    original_back = {"version": 1, "school_title": "Original back"}
+    template = SimpleNamespace(
+        uuid=uuid4(),
+        school_id=school.id,
+        name="Two-sided",
+        design={"version": 1, "school_title": "Front"},
+        back_design=original_back,
+        updated_at=datetime.now(timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user,
+        school=school,
+        access=access,
+        template=template,
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+
+    replacement_back = {"version": 1, "school_title": "Replacement back"}
+    with TestClient(app) as client:
+        updated = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Two-sided",
+                "design": {"version": 1, "school_title": "Front updated"},
+                "back_design": replacement_back,
+            },
+        )
+        legacy = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={
+                "name": "Legacy save",
+                "design": {"version": 1, "school_title": "Front again"},
+            },
+        )
+
+    assert updated.status_code == 200
+    assert updated.json()["back_design"] == replacement_back
+    assert legacy.status_code == 200
+    assert legacy.json()["back_design"] == replacement_back
+    assert template.back_design == replacement_back
 
 
 def test_card_template_matching_token_succeeds_and_returns_a_new_token():

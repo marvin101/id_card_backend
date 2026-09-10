@@ -4,7 +4,7 @@ import re
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SUPPORTED_ELEMENT_TYPES = {
@@ -481,6 +481,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
 class CardTemplateUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     design: dict[str, Any]
+    back_design: dict[str, Any] | None = None
     expected_updated_at: datetime | None = None
 
     @field_validator("name", mode="before")
@@ -498,6 +499,36 @@ class CardTemplateUpdate(BaseModel):
     def validate_design(cls, value: dict[str, Any]) -> dict[str, Any]:
         return validate_design_document(value)
 
+    @field_validator("back_design")
+    @classmethod
+    def validate_back_design(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return None if value is None else validate_design_document(value)
+
+    @model_validator(mode="after")
+    def validate_matching_side_geometry(self) -> "CardTemplateUpdate":
+        if self.back_design is None:
+            return self
+        front_canvas = self.design.get("canvas")
+        back_canvas = self.back_design.get("canvas")
+        if not isinstance(front_canvas, dict) or not isinstance(back_canvas, dict):
+            return self
+        for dimension in ("width", "height"):
+            front_value = front_canvas.get(dimension)
+            back_value = back_canvas.get(dimension)
+            if (
+                isinstance(front_value, (int, float))
+                and isinstance(back_value, (int, float))
+                and not math.isclose(
+                    float(front_value), float(back_value), abs_tol=0.001
+                )
+            ):
+                raise ValueError(
+                    "front and back canvas dimensions must match for duplex printing"
+                )
+        return self
+
     @field_validator("expected_updated_at")
     @classmethod
     def validate_expected_updated_at(cls, value: datetime | None) -> datetime | None:
@@ -512,6 +543,7 @@ class CardTemplateResponse(BaseModel):
     uuid: UUID
     name: str
     design: dict[str, Any]
+    back_design: dict[str, Any] | None = None
     updated_at: datetime
 
 
@@ -544,4 +576,5 @@ class PublicDesignSchool(BaseModel):
 class PublicDesignView(BaseModel):
     name: str
     design: dict[str, Any]
+    back_design: dict[str, Any] | None = None
     school: PublicDesignSchool

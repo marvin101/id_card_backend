@@ -8,6 +8,17 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+### Added
+
+- Added optional back-side Designer documents to card templates and public
+  design previews, with independent v2 validation and matching front/back
+  canvas dimensions for duplex alignment.
+
+### Changed
+
+- Legacy clients that omit `back_design` preserve an existing back side, while
+  an explicit `null` removes it.
+
 ## [0.8.0] - 2026-09-10
 
 ### Added

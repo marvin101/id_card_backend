@@ -5,6 +5,12 @@ default landscape CR80 canvas is `85.60 × 53.98`; Flutter converts millimetres
 to logical pixels only while displaying the canvas, and the PDF service uses
 the same values with `PdfPageFormat.mm`. Zoom never changes saved geometry.
 
+A template stores this document as its required `design` (front side) and may
+store a second document as `back_design`. Front and back are edited
+independently but must use matching canvas width and height for duplex
+alignment. Omitting `back_design` from an update preserves an existing back;
+an explicit `null` removes it.
+
 ```json
 {
   "schema_version": 2,

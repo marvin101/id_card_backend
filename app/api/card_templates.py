@@ -161,6 +161,7 @@ def get_public_design(
     return PublicDesignView(
         name=template.name,
         design=template.design,
+        back_design=getattr(template, "back_design", None),
         school=PublicDesignSchool(
             uuid=school.uuid,
             school_code=school.school_code,
@@ -210,6 +211,7 @@ def save_card_template(
             school_id=school.id,
             name=template_data.name.strip(),
             design=template_data.design,
+            back_design=template_data.back_design,
         )
         db.add(template)
     else:
@@ -225,6 +227,8 @@ def save_card_template(
             )
         template.name = template_data.name.strip()
         template.design = template_data.design
+        if "back_design" in template_data.model_fields_set:
+            template.back_design = template_data.back_design
         template.updated_at = _next_updated_at(template.updated_at)
 
     try:

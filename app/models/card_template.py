@@ -26,6 +26,7 @@ class CardTemplate(Base):
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     design: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    back_design: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     public_token: Mapped[str | None] = mapped_column(
         String(96), unique=True, nullable=True, index=True,
     )

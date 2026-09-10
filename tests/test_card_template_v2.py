@@ -86,6 +86,48 @@ def test_v2_template_saves_and_round_trips():
     assert payload.model_dump()["design"] == document
 
 
+def test_optional_back_design_uses_the_same_bounded_contract():
+    front = _document()
+    back = _document()
+    back["elements"][0]["data"]["fallback"] = "Back side"
+    payload = CardTemplateUpdate(
+        name="Two-sided card",
+        design=front,
+        back_design=back,
+    )
+    assert payload.back_design == back
+
+    invalid_back = deepcopy(back)
+    invalid_back["canvas"]["width"] = 0
+    with pytest.raises(ValidationError, match="greater than 10"):
+        CardTemplateUpdate(
+            name="Invalid back",
+            design=front,
+            back_design=invalid_back,
+        )
+
+
+def test_back_design_may_be_explicitly_removed_or_omitted():
+    document = _document()
+    removed = CardTemplateUpdate(
+        name="Front only",
+        design=document,
+        back_design=None,
+    )
+    omitted = CardTemplateUpdate(name="Legacy client", design=document)
+    assert removed.back_design is None
+    assert "back_design" in removed.model_fields_set
+    assert "back_design" not in omitted.model_fields_set
+
+
+def test_front_and_back_canvas_dimensions_must_match():
+    front = _document()
+    back = _document()
+    back["canvas"]["height"] += 1
+    with pytest.raises(ValidationError, match="canvas dimensions must match"):
+        CardTemplateUpdate(name="Mismatched sides", design=front, back_design=back)
+
+
 def test_non_default_canvas_size_is_accepted():
     document = _document()
     document["canvas"].update(

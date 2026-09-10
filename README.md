@@ -96,7 +96,7 @@ Use `/docs` or `/openapi.json` for exact methods, query parameters, request bodi
 
 ## Designer v2 API contract
 
-The card-template endpoint stores one template per school. The database uniqueness constraint enforces that relationship, and the same `/schools/{school_uuid}/card-template` resource is used for reads and upsert-style saves.
+The card-template endpoint stores one template per school. The database uniqueness constraint enforces that relationship, and the same `/schools/{school_uuid}/card-template` resource is used for reads and upsert-style saves. `design` is the required front document and `back_design` is an optional back document. When both are v2 documents their canvas dimensions must match so the two sides remain physically aligned.
 
 ### Validation
 
@@ -107,6 +107,8 @@ The principal numeric limits are: canvas width/height greater than 10 mm and at 
 ### Compatibility and persistence
 
 Schema v2 is strictly validated. A missing version and explicit v1 remain supported as legacy documents, while explicit unknown versions are rejected. Unknown extension keys are preserved for forward compatibility; validation constrains recognized fields without rewriting the submitted document.
+
+For compatibility, a client that omits `back_design` during an update leaves the stored back side unchanged. Sending `back_design: null` removes it explicitly.
 
 Validation completes before endpoint persistence. A rejected request therefore leaves the previous template unchanged. A successful `PUT` commits and refreshes the row, then returns the authoritative stored representation expected by Flutter. Existing legacy templates remain readable. See [Designer v2 document](docs/DESIGNER_V2.md) for the document shape and binding model.
 
