@@ -12,6 +12,7 @@ Record the release owner, candidate Git commit IDs, migration revision, verifica
 
 ## Backend candidate
 
+- [ ] `app/version.py`, FastAPI OpenAPI metadata, both changelogs, and Flutter package metadata identify the candidate as `0.8.0` / `0.8.0+8`.
 - [ ] GitHub Backend CI passes for the release candidate.
 - [ ] `python -m pytest` passes.
 - [ ] `python -m compileall app` passes.

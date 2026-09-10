@@ -4,9 +4,9 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 
 ## Current release
 
-- **CampusID v0.7.0** — the Excel Grid release.
-- Includes the production-smoke-tested grid API, Public Forms from the 0.6.x milestone, student lifecycle and audit controls, bulk imports, dynamic student fields, and the current card/PDF workflow.
-- Remains pre-1.0 while Designer v2, secure digital verification, advanced print production, and other roadmap modules continue to mature. Verification-link work is currently tracked under **Unreleased** and does not change the published `0.7.0` version.
+- **CampusID v0.8.0** — the Designer v2 and secure student-verification release.
+- Adds validated Designer v2 persistence, scoped QR payloads, revocable verification links, school-controlled public disclosure, and hardened anonymous verification reads.
+- Includes the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, dynamic student fields, and card/PDF workflows from earlier milestones. CampusID remains pre-1.0 while advanced print production and other roadmap modules continue to mature.
 
 ## Architecture
 
@@ -322,7 +322,7 @@ The built-in limiter is process local. For the normal Render proxy topology, `AU
 
 CampusID follows Semantic Versioning: `MAJOR.MINOR.PATCH`. Backend and Flutter currently share one product version. The API's authoritative version is `app/version.py`, and FastAPI exposes it in OpenAPI metadata.
 
-The current release is `0.7.0`: `0.6.x` represented Public Forms and `0.7.0` adds the Excel Grid milestone. Pre-1.0 minor releases may still introduce substantial product changes.
+The current release is `0.8.0`: `0.6.x` represented Public Forms, `0.7.0` added the Excel Grid, and `0.8.0` delivers Designer v2, flexible QR payloads, and secure student-verification links. Pre-1.0 minor releases may still introduce substantial product changes.
 
 ## Roadmap
 

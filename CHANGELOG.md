@@ -8,6 +8,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-10
+
 ### Added
 
 - Added validation for versioned Designer v2 documents while preserving legacy v1 templates.
