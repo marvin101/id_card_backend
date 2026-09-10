@@ -328,7 +328,7 @@ The current release is `0.8.0`: `0.6.x` represented Public Forms, `0.7.0` added 
 
 ## Roadmap
 
-- Advanced print production and Print Basket (duplex output complete; production calibration and reusable print presets remain)
+- Advanced print production and Print Basket (duplex output, production calibration, and reusable client-side print presets complete)
 - Barcode formats and advanced signed/time-bounded digital credentials
 - Designer v2 remaining fidelity and contract hardening
 - Teacher and non-teaching staff workflows
