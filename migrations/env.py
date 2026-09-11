@@ -43,6 +43,14 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+AUTOGENERATE_PLUGINS = [
+    "alembic.autogenerate.*",
+    # Alembic 1.19.2 made named CHECK detection opt-in. CampusID explicitly
+    # names its CHECK constraints and tests that invariant, so name-based
+    # detection is safe to enable. Expressions must still be reviewed by hand.
+    "alembic.ext.checkconstraint_byname",
+]
+
 
 # ==========================================================
 # Database URL
@@ -74,6 +82,7 @@ def run_migrations_offline() -> None:
         },
         compare_type=True,
         compare_server_default=True,
+        autogenerate_plugins=AUTOGENERATE_PLUGINS,
     )
 
     with context.begin_transaction():
@@ -99,6 +108,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
+            autogenerate_plugins=AUTOGENERATE_PLUGINS,
         )
 
         with context.begin_transaction():

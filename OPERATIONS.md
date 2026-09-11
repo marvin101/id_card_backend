@@ -85,6 +85,13 @@ Because limiter state is not shared, scaling to multiple workers or instances mu
 
 ## Database migrations
 
+CampusID uses a SQLAlchemy metadata naming convention aligned with PostgreSQL's
+existing implicit constraint names. All CHECK constraints must also have an
+explicit stable name. Alembic 1.19.2's named CHECK detector is enabled in
+`migrations/env.py`; it compares names only and cannot detect a changed CHECK
+expression under an unchanged name. Every generated migration therefore still
+requires manual inspection.
+
 1. Review every migration and its downgrade implications before deployment.
 2. Run `python -m alembic heads` and confirm the repository has the intended single head.
 3. Compare the production revision with the intended revision before applying anything.
@@ -92,6 +99,29 @@ Because limiter state is not shared, scaling to multiple workers or instances mu
 5. Never casually edit or rewrite an Alembic migration that may already have been applied. Add a corrective revision instead.
 
 Irreversible data changes require extra review. A code rollback does not automatically reverse a database migration.
+
+## PostgreSQL security patch verification
+
+The PostgreSQL security baseline released on 2026-08-13 is 18.6, 17.11, 16.15,
+15.19, or 14.24, depending on the project's major version. Before deployment
+and after Supabase maintenance, run this read-only check from an environment
+configured with the production database settings:
+
+```powershell
+python -m app.core.postgres_patch_level
+```
+
+An exit code of `0` means the server meets the reviewed baseline; exit code `2`
+means the version is below it or outside the reviewed supported-major set.
+Record only the returned PostgreSQL version and result, never credentials.
+
+After an affected server update, inspect GIN-index table statistics and run
+`ANALYZE` where `reltuples` is clearly invalid. If the project uses
+`btree_gist` indexes over float/bit data or extremely deep `ltree` values,
+follow PostgreSQL's release-specific reindex guidance. Supabase controls the
+database binaries, so an outdated result must be escalated through the
+Supabase project maintenance/upgrade controls rather than worked around in
+application code.
 
 ## Supabase controls and recovery
 

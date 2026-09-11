@@ -26,11 +26,17 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 - Public credentials use a dedicated `CREDENTIAL_SIGNING_KEY` when configured;
   credential tokens are explicitly rejected as authenticated access tokens.
+- Added a read-only PostgreSQL patch-level check for the 2026-08-13 security
+  baseline and made it a release-checklist requirement.
 
 ### Changed
 
 - Legacy clients that omit `back_design` preserve an existing back side, while
   an explicit `null` removes it.
+- Updated Alembic to 1.19.2 and Pydantic to 2.13.5, adopted stable metadata
+  constraint naming, and explicitly enabled named CHECK autogeneration.
+- Added a non-blocking scheduled CI compatibility run for SQLAlchemy 2.1 RC2;
+  production remains pinned to SQLAlchemy 2.0.
 
 ## [0.8.0] - 2026-09-10
 
