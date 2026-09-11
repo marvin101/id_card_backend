@@ -40,6 +40,7 @@ from app.core.school_access import (
     require_school_admin,
 )
 from app.core.security import get_current_user
+from app.core.public_credentials import initialize_public_credential
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
@@ -247,6 +248,9 @@ async def create_student(
         aadhaar=student_data.aadhaar,
         address=student_data.address,
         photo_path=None,
+    )
+    initialize_public_credential(
+        student, getattr(school, "public_verification_validity_days", 365)
     )
 
     db.add(student)

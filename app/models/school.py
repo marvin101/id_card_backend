@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, DateTime, String, Text, func
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +21,12 @@ if TYPE_CHECKING:
 
 class School(Base):
     __tablename__ = "schools"
+    __table_args__ = (
+        CheckConstraint(
+            "public_verification_validity_days BETWEEN 1 AND 3650",
+            name="ck_school_public_verification_validity_days",
+        ),
+    )
 
     # ==========================================================
     # Primary Key
@@ -133,6 +139,9 @@ class School(Base):
         nullable=False,
         default=lambda: ["full_name", "admission_no", "class", "section"],
         server_default='["full_name", "admission_no", "class", "section"]',
+    )
+    public_verification_validity_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=365, server_default="365"
     )
 
     # ==========================================================

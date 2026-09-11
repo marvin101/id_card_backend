@@ -1,4 +1,4 @@
-import secrets
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -8,6 +8,13 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.database import get_db
 from app.core.file_storage import get_storage_public_url
 from app.core.rate_limit import enforce_public_verification_rate_limit
+from app.core.public_credentials import (
+    PublicCredentialError,
+    decode_public_credential,
+    normalized_utc,
+    public_credential_status,
+    rotate_public_credential,
+)
 from app.core.school_access import get_active_school, require_school_admin
 from app.core.security import get_current_user
 from app.core.student_audit import record_student_audit
@@ -49,6 +56,7 @@ def _settings_response(school: School) -> PublicVerificationSettingsResponse:
         enabled=school.public_verification_enabled,
         fields=school.public_verification_fields
         or DEFAULT_PUBLIC_VERIFICATION_FIELDS,
+        validity_days=school.public_verification_validity_days,
         available_fields=[
             PublicVerificationFieldOption(key=key, label=label)
             for key, label in PUBLIC_VERIFICATION_FIELDS.items()
@@ -101,8 +109,21 @@ def update_public_verification_settings(
     )
     school.public_verification_enabled = payload.enabled
     school.public_verification_fields = payload.fields
+    if payload.validity_days is not None:
+        school.public_verification_validity_days = payload.validity_days
     db.commit()
     return _settings_response(school)
+
+
+def _link_response(student: Student) -> StudentVerificationLinkResponse:
+    return StudentVerificationLinkResponse(
+        enabled=student.public_verification_enabled,
+        verification_url=student.verification_url,
+        credential_status=public_credential_status(student),
+        credential_version=student.public_credential_version,
+        issued_at=student.public_credential_issued_at,
+        expires_at=student.public_credential_expires_at,
+    )
 
 
 @student_router.get("", response_model=StudentVerificationLinkResponse)
@@ -115,10 +136,7 @@ def get_student_verification_link(
     school = get_active_school(db, school_uuid)
     require_school_admin(db, current_user, school.id, _ADMIN_DETAIL)
     student = _student(db, school.id, student_uuid)
-    return StudentVerificationLinkResponse(
-        enabled=student.public_verification_enabled,
-        verification_url=student.verification_url,
-    )
+    return _link_response(student)
 
 
 @student_router.put("", response_model=StudentVerificationLinkResponse)
@@ -133,7 +151,10 @@ def update_student_verification_link(
     require_school_admin(db, current_user, school.id, _ADMIN_DETAIL)
     student = _student(db, school.id, student_uuid)
     previous = student.public_verification_enabled
-    student.public_verification_enabled = payload.enabled
+    if payload.enabled and public_credential_status(student) == "expired":
+        rotate_public_credential(student, school.public_verification_validity_days)
+    else:
+        student.public_verification_enabled = payload.enabled
     record_student_audit(
         db,
         student=student,
@@ -144,10 +165,7 @@ def update_student_verification_link(
         new_value=payload.enabled,
     )
     db.commit()
-    return StudentVerificationLinkResponse(
-        enabled=student.public_verification_enabled,
-        verification_url=student.verification_url,
-    )
+    return _link_response(student)
 
 
 @student_router.post(
@@ -162,8 +180,7 @@ def regenerate_student_verification_link(
     school = get_active_school(db, school_uuid)
     require_school_admin(db, current_user, school.id, _ADMIN_DETAIL)
     student = _student(db, school.id, student_uuid)
-    student.public_verification_token = secrets.token_urlsafe(32)
-    student.public_verification_enabled = True
+    rotate_public_credential(student, school.public_verification_validity_days)
     record_student_audit(
         db,
         student=student,
@@ -171,10 +188,7 @@ def regenerate_student_verification_link(
         event_type="public_verification_link_regenerated",
     )
     db.commit()
-    return StudentVerificationLinkResponse(
-        enabled=True,
-        verification_url=student.verification_url,
-    )
+    return _link_response(student)
 
 
 def _public_value(student: Student, key: str) -> str:
@@ -198,12 +212,25 @@ def get_public_student_verification(
 ):
     enforce_public_verification_rate_limit(request)
     response.headers["Cache-Control"] = "no-store"
-    if not 20 <= len(token) <= 96:
+    if not 20 <= len(token) <= 2048:
         raise HTTPException(
             status_code=404,
             detail=_NOT_FOUND_DETAIL,
             headers={"Cache-Control": "no-store"},
         )
+    signed_payload = None
+    lookup_token = token
+    if token.startswith("c1."):
+        try:
+            signed_payload = decode_public_credential(token)
+            lookup_token = signed_payload["jti"]
+        except (PublicCredentialError, KeyError, TypeError, ValueError):
+            raise HTTPException(
+                status_code=404,
+                detail=_NOT_FOUND_DETAIL,
+                headers={"Cache-Control": "no-store"},
+            )
+
     student = db.execute(
         select(Student)
         .options(
@@ -213,7 +240,7 @@ def get_public_student_verification(
             selectinload(Student.section),
         )
         .where(
-            Student.public_verification_token == token,
+            Student.public_verification_token == lookup_token,
             Student.public_verification_enabled.is_(True),
             Student.is_active.is_(True),
         )
@@ -223,6 +250,27 @@ def get_public_student_verification(
         or not student.school.is_active
         or not student.school.public_verification_enabled
     ):
+        raise HTTPException(
+            status_code=404,
+            detail=_NOT_FOUND_DETAIL,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    if signed_payload is not None:
+        expires_at = datetime.fromtimestamp(signed_payload["exp"], timezone.utc)
+        if (
+            signed_payload["ver"] != student.public_credential_version
+            or int(expires_at.timestamp())
+            != int(normalized_utc(student.public_credential_expires_at).timestamp())
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=_NOT_FOUND_DETAIL,
+                headers={"Cache-Control": "no-store"},
+            )
+    elif public_credential_status(student) != "active":
+        # Legacy opaque URLs remain valid during rollout, but they are still
+        # constrained by the new server-side expiry.
         raise HTTPException(
             status_code=404,
             detail=_NOT_FOUND_DETAIL,
@@ -253,5 +301,10 @@ def get_public_student_verification(
             if "photo" in configured
             else None
         ),
+        credential_status="active",
+        credential_version=student.public_credential_version,
+        credential_issued_at=student.public_credential_issued_at,
+        credential_expires_at=student.public_credential_expires_at,
+        signature_verified=signed_payload is not None,
         fields=fields,
     )

@@ -23,6 +23,7 @@ from app.core.file_storage import (
 from app.core.rate_limit import enforce_public_form_rate_limit
 from app.core.school_access import get_active_school, require_school_admin
 from app.core.security import get_current_user
+from app.core.public_credentials import initialize_public_credential
 from app.core.student_audit import record_student_audit
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
@@ -298,6 +299,14 @@ async def submit_public_form(
         mobile=payload.mobile, aadhaar=payload.aadhaar, address=payload.address,
         photo_path=None, verification_status="pending", correction_note=None,
         verified_at=None, verified_by_user_id=None, printed_at=None, printed_by_user_id=None, print_count=0,
+    )
+    initialize_public_credential(
+        student,
+        getattr(
+            getattr(form, "school", None),
+            "public_verification_validity_days",
+            365,
+        ),
     )
     uploaded_path = None
     try:

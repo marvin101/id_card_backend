@@ -24,6 +24,7 @@ DEFAULT_PUBLIC_VERIFICATION_FIELDS = [
 class PublicVerificationSettingsUpdate(BaseModel):
     enabled: bool
     fields: list[str] = Field(min_length=1, max_length=8)
+    validity_days: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("fields")
     @classmethod
@@ -46,6 +47,7 @@ class PublicVerificationFieldOption(BaseModel):
 class PublicVerificationSettingsResponse(BaseModel):
     enabled: bool
     fields: list[str]
+    validity_days: int
     available_fields: list[PublicVerificationFieldOption]
 
 
@@ -56,6 +58,10 @@ class StudentVerificationLinkUpdate(BaseModel):
 class StudentVerificationLinkResponse(BaseModel):
     enabled: bool
     verification_url: str | None
+    credential_status: str
+    credential_version: int
+    issued_at: datetime
+    expires_at: datetime
 
 
 class PublicVerificationSchool(BaseModel):
@@ -76,4 +82,9 @@ class PublicStudentVerificationView(BaseModel):
     lifecycle_status: str
     verified_at: datetime | None = None
     photo_url: str | None = None
+    credential_status: str
+    credential_version: int
+    credential_issued_at: datetime
+    credential_expires_at: datetime
+    signature_verified: bool
     fields: list[PublicVerificationValue]

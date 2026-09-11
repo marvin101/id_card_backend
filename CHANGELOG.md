@@ -16,6 +16,16 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 - Added a validated Designer v2 `barcode` contract for Code 128, Code 39,
   EAN-13, and Data Matrix, including static, single-field, custom-field, and
   scoped multi-field payloads plus format-specific content and geometry limits.
+- Added signed, purpose-bound public student credentials with configurable
+  1–3650 day validity, issuance/expiry/version metadata, purpose-separated
+  compact HMAC validation, tamper detection, expiring links, and versioned regeneration.
+- Added migration `c6d2e9f4a731` to backfill credential lifecycle metadata and
+  the per-school validity policy without invalidating existing opaque links.
+
+### Security
+
+- Public credentials use a dedicated `CREDENTIAL_SIGNING_KEY` when configured;
+  credential tokens are explicitly rejected as authenticated access tokens.
 
 ### Changed
 

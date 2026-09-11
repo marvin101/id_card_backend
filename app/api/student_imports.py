@@ -13,6 +13,7 @@ from app.core.custom_fields import replace_student_custom_fields, validate_stude
 from app.core.database import get_db
 from app.core.school_access import get_active_school, require_card_data_access
 from app.core.security import get_current_user
+from app.core.public_credentials import initialize_public_credential
 from app.core.student_imports import delete_import_manifest, load_import_manifest, parse_student_upload, save_import_manifest
 from app.core.student_import_template import (
     XLSX_CONTENT_TYPE,
@@ -325,6 +326,9 @@ def commit_student_import(school_uuid: UUID, upload_id: UUID, payload: StudentIm
                 admission_no=data.admission_no, roll_no=data.roll_no, stream=data.stream, full_name=data.full_name,
                 father_name=data.father_name, mother_name=data.mother_name, dob=data.dob, gender=data.gender,
                 blood_group=data.blood_group, mobile=data.mobile, aadhaar=data.aadhaar, address=data.address, photo_path=None,
+            )
+            initialize_public_credential(
+                student, getattr(school, "public_verification_validity_days", 365)
             )
             db.add(student)
             replace_student_custom_fields(db, student, row.custom_fields or [])

@@ -51,6 +51,7 @@ def create_access_token(
     payload = {
         "sub": subject,
         "exp": expire,
+        "typ": "access",
     }
 
     return jwt.encode(
@@ -63,11 +64,14 @@ def create_access_token(
 def decode_access_token(token: str) -> dict:
     """Decode and validate a JWT access token."""
 
-    return jwt.decode(
+    payload = jwt.decode(
         token,
         settings.secret_key,
         algorithms=[settings.algorithm],
     )
+    if payload.get("typ") not in (None, "access"):
+        raise jwt.InvalidTokenError("Invalid token purpose")
+    return payload
 security = HTTPBearer()
 
 

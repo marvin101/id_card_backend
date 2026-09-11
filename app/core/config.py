@@ -41,6 +41,10 @@ class Settings(BaseSettings):
 
     # Public web origin used in revocable student-verification QR links.
     public_app_url: str = "https://idcard-flutter-web.vercel.app"
+    # A dedicated key is recommended so public credentials can be rotated
+    # independently from login sessions. SECRET_KEY remains a safe rollout
+    # fallback for existing deployments.
+    credential_signing_key: str | None = None
 
     # Only trust forwarded client addresses when this many known proxies sit
     # directly in front of the application. Keep at 0 for direct exposure.
@@ -60,6 +64,10 @@ class Settings(BaseSettings):
             for origin in self.cors_origins.split(",")
             if origin.strip()
         ]
+
+    @property
+    def public_credential_signing_key(self) -> str:
+        return self.credential_signing_key or self.secret_key
 
 
 settings = Settings()

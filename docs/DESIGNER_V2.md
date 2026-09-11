@@ -75,7 +75,7 @@ a human-readable value, while Data Matrix does not. Flutter repeats resolved
 content validation before bulk PDF generation.
 
 `verification_url` is a special single-field QR binding. It resolves to the
-student's random public capability URL and is deliberately rejected for
+student's signed, expiring public capability URL and is deliberately rejected for
 `bound_text` and multi-field QR payloads. This keeps the opaque link inside the
 QR code and prevents accidental visible or mixed PII payloads. New QR elements
 created by Flutter use this recommended source by default; existing static,
@@ -85,6 +85,10 @@ The linked public page remains unavailable until a school administrator enables
 public verification and selects the permitted disclosure fields. Disabling the
 school or student setting revokes access, while regenerating a student's token
 invalidates the prior link and requires cards containing it to be reprinted.
+The signed credential is purpose- and audience-bound, contains no disclosed
+student profile values, and is checked against the current token identifier and
+credential version before any school-approved fields are returned. Legacy opaque
+links remain compatible during rollout but are subject to the migrated expiry.
 
 The editor-supported bounds are `font_size <= 20`, `border_width <= 10`,
 `corner_radius <= 30`, and `max_lines <= 100`; an explicitly configured line

@@ -6,8 +6,8 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] Back up PostgreSQL and verify the documented restore procedure and owner.
 - [ ] Confirm the database revision with `python -m alembic current` and the single target head with `python -m alembic heads`.
-- [ ] Review every pending migration through `b4f8c2a91d73`, including token backfill, disclosure defaults, and optional card-template back designs, and run `python -m alembic upgrade head` as an explicit release step.
-- [ ] Configure every variable listed in `.env.example`; use a strong production-only `SECRET_KEY` and the exact approved frontend origins in `CORS_ORIGINS`.
+- [ ] Review every pending migration through `c6d2e9f4a731`, including credential timestamps/version backfill, validity defaults, and optional card-template back designs, and run `python -m alembic upgrade head` as an explicit release step.
+- [ ] Configure every variable listed in `.env.example`; use separate strong production-only `SECRET_KEY` and `CREDENTIAL_SIGNING_KEY` values and the exact approved frontend origins in `CORS_ORIGINS`.
 - [ ] Set `PUBLIC_APP_URL` to the canonical Vercel production origin and confirm `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` is reviewed.
 - [ ] Confirm Render's trusted proxy-hop count and that login, registration, public-form, public-design, and public-verification rate limiting remain enabled or have reviewed edge equivalents.
 - [ ] Confirm the Supabase Storage bucket policy, backup implications, and cleanup procedure for student photos and temporary bulk-import objects.
@@ -19,7 +19,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] `GET /health` returns `200` without authentication.
 - [ ] `GET /health/check` returns `200`; a controlled database outage returns generic `503` without internal details.
-- [ ] `python -m alembic current` reports `b4f8c2a91d73` after migration.
+- [ ] `python -m alembic current` reports `c6d2e9f4a731` after migration.
 - [ ] Direct Supabase Data API access to application tables remains denied by RLS, including `bulk_photo_imports`.
 - [ ] Expected `400`, `401`, `403`, `404`, `409`, `413`, `422`, and `429` responses contain useful safe messages; an induced server failure returns generic `500`/`502` without provider or SQL details.
 
@@ -38,6 +38,8 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Confirm anonymous template mutation returns `401` and a non-admin share-management request returns `403`.
 - [ ] Add the recommended Verification link QR source, save the template, and confirm Cards/PDF output contains a short `/verify/<token>` URL rather than embedded PII.
 - [ ] Enable public verification with an intentionally limited field set; scan a card and confirm only those fields, school identity, and lifecycle status appear.
+- [ ] Configure credential validity, regenerate a student credential, and confirm the public page reports a verified signature and the expected expiry.
+- [ ] Confirm a modified, expired, or superseded signed credential returns the same generic unavailable response.
 - [ ] Disable one student's link and confirm generic `404`; re-enable it, regenerate the link, confirm the old QR fails, and reprint the card with the new link.
 - [ ] Disable school-wide verification and confirm every student link becomes unavailable without changing the saved tokens.
 - [ ] Confirm an anonymous verification request has no bearer header, a non-admin cannot manage disclosure/link settings, and sensitive fields cannot be selected.

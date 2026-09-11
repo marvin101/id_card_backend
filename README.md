@@ -5,7 +5,7 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 ## Current release
 
 - **CampusID v0.8.0** — the Designer v2 and secure student-verification release.
-- Adds validated Designer v2 persistence, scoped QR and barcode payloads, revocable verification links, school-controlled public disclosure, and hardened anonymous verification reads.
+- Adds validated Designer v2 persistence, scoped QR and barcode payloads, signed time-bounded verification credentials, school-controlled public disclosure, and hardened anonymous verification reads.
 - Includes the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, dynamic student fields, and card/PDF workflows from earlier milestones. CampusID remains pre-1.0 while advanced print production and other roadmap modules continue to mature.
 
 ## Architecture
@@ -46,7 +46,7 @@ The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage
 - Excel Grid paging, filtering, search, inline bulk updates, conflict detection, and structured validation errors
 - Per-school Card Designer template storage
 - CORS, request-size controls, authentication/public-route throttling, and health endpoints
-- Revocable public student-verification links with school-controlled disclosure
+- Signed, expiring, and revocable public student-verification credentials with school-controlled disclosure
 - Validated Code 128, Code 39, EAN-13, and Data Matrix Designer elements with scoped bindings
 
 ## Authorization model
@@ -127,8 +127,9 @@ Template responses include `updated_at`; conditional saves compare `expected_upd
 
 ## Public student verification
 
-- Each student receives a random, non-enumerable capability URL. The Designer's recommended QR source encodes only that URL, not student PII.
+- Each student receives a signed, non-enumerable, time-bounded capability URL. The Designer's recommended QR source encodes only that URL, not student PII; legacy opaque URLs remain accepted during rollout until their server-side expiry.
 - Public verification is disabled for each school until an administrator enables it and chooses the disclosed fields.
+- Administrators choose a 1–3650 day validity period for newly issued credentials. Each credential is purpose-bound, signed, versioned, and checked against the current student and school state.
 - The public response permits only name, admission/roll number, stream, academic session, class, section, and photo; contact, address, Aadhaar, parent, audit, and internal identifiers are never eligible.
 - Administrators can disable all school links, disable one student's link, or regenerate one student's token to invalidate the old QR/link.
 - Missing, disabled, revoked, and inactive records share a generic `404`; successful and failed reads use `Cache-Control: no-store`, and reads have an independent rate limit.
@@ -239,6 +240,7 @@ The authoritative settings are in `app/core/config.py`. Environment names curren
 | `DB_USER` | Database user |
 | `DB_PASSWORD` | Database password |
 | `SECRET_KEY` | JWT signing secret |
+| `CREDENTIAL_SIGNING_KEY` | Dedicated signing secret for public student credentials; falls back to `SECRET_KEY` only for rollout compatibility |
 | `ALGORITHM` | JWT algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Bearer-token lifetime |
 | `SUPABASE_URL` | Supabase project URL |
@@ -331,7 +333,7 @@ The current release is `0.8.0`: `0.6.x` represented Public Forms, `0.7.0` added 
 
 - Advanced print production and Print Basket (duplex output, production calibration, and reusable client-side print presets complete)
 - Barcode formats (Code 128, Code 39, EAN-13, and Data Matrix complete)
-- Advanced signed/time-bounded digital credentials
+- Advanced signed/time-bounded digital credentials (issuance, expiry, versioned regeneration, and public signature status complete)
 - Designer v2 remaining fidelity and contract hardening
 - Teacher and non-teaching staff workflows
 - School collaboration

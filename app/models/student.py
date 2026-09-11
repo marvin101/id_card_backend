@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 import secrets
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -15,6 +15,7 @@ from sqlalchemy import (
     CheckConstraint,
     and_,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
@@ -60,6 +61,10 @@ class Student(Base):
             name="ck_student_verification_status",
         ),
         CheckConstraint("print_count >= 0", name="ck_student_print_count"),
+        CheckConstraint(
+            "public_credential_version >= 1",
+            name="ck_student_public_credential_version",
+        ),
         # Admission number is permanently unique within a school.
         UniqueConstraint(
             "school_id",
@@ -270,6 +275,21 @@ class Student(Base):
     public_verification_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+    public_credential_issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    public_credential_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc) + timedelta(days=365),
+        server_default=text("now() + interval '365 days'"),
+    )
+    public_credential_version: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1"
+    )
 
     @property
     def session_uuid(self) -> UUID:
@@ -359,11 +379,21 @@ class Student(Base):
     @property
     def verification_url(self) -> str | None:
         from app.core.config import settings
+        from app.core.public_credentials import issue_public_credential, utc_now
 
         if not self.public_verification_token:
             return None
+        issued_at = self.public_credential_issued_at or utc_now()
+        expires_at = self.public_credential_expires_at or (
+            issued_at + timedelta(days=365)
+        )
+        credential = issue_public_credential(
+            token_id=self.public_verification_token,
+            version=self.public_credential_version or 1,
+            expires_at=expires_at,
+        )
         base = settings.public_app_url.rstrip("/")
-        return f"{base}/verify/{self.public_verification_token}"
+        return f"{base}/verify/{credential}"
 
     @property
     def custom_fields(self) -> list[dict]:

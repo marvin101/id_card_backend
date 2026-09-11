@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -10,6 +10,10 @@ from app.api.public_verification import public_router
 from app.core.database import get_db
 from app.core.rate_limit import public_verification_rate_limiter
 from app.core.security import get_current_user
+from app.core.public_credentials import (
+    decode_public_credential,
+    issue_public_credential,
+)
 from app.main import app
 from app.models.school import School
 from app.models.student import Student
@@ -65,6 +69,7 @@ class _Database:
 
 
 def _fixture(*, school_enabled=True, student_enabled=True, role="school_admin"):
+    credential_now = datetime.now(timezone.utc)
     school = SimpleNamespace(
         id=10,
         uuid=uuid4(),
@@ -74,6 +79,7 @@ def _fixture(*, school_enabled=True, student_enabled=True, role="school_admin"):
         is_active=True,
         public_verification_enabled=school_enabled,
         public_verification_fields=["full_name", "class", "section"],
+        public_verification_validity_days=90,
     )
     student = SimpleNamespace(
         id=20,
@@ -94,6 +100,9 @@ def _fixture(*, school_enabled=True, student_enabled=True, role="school_admin"):
         is_active=True,
         public_verification_token="opaque-verification-token-1234567890",
         public_verification_enabled=student_enabled,
+        public_credential_issued_at=credential_now - timedelta(days=1),
+        public_credential_expires_at=credential_now + timedelta(days=90),
+        public_credential_version=1,
         verification_url="https://app.example/verify/opaque-verification-token-1234567890",
     )
     user = SimpleNamespace(id=1, is_platform_admin=False, platform_role=None)
@@ -135,6 +144,9 @@ def test_public_verification_is_anonymous_and_discloses_only_configured_fields()
         {"key": "class", "label": "Class", "value": "10"},
         {"key": "section", "label": "Section", "value": "A"},
     ]
+    assert response.json()["credential_status"] == "active"
+    assert response.json()["credential_version"] == 1
+    assert response.json()["signature_verified"] is False
     assert "public_verification_token" not in response.text
     assert "uuid" not in response.text
     assert "admission_no" not in response.text
@@ -172,12 +184,17 @@ def test_admin_controls_school_public_verification_disclosure():
     with TestClient(app) as client:
         response = client.put(
             f"/schools/{school.uuid}/public-verification",
-            json={"enabled": True, "fields": ["full_name", "photo"]},
+            json={
+                "enabled": True,
+                "fields": ["full_name", "photo"],
+                "validity_days": 180,
+            },
         )
     assert response.status_code == 200
     assert response.json()["enabled"] is True
     assert response.json()["fields"] == ["full_name", "photo"]
     assert school.public_verification_fields == ["full_name", "photo"]
+    assert school.public_verification_validity_days == 180
     assert db.commits == 1
 
 
@@ -192,6 +209,7 @@ def test_non_admin_cannot_manage_public_verification():
 def test_admin_can_revoke_and_regenerate_one_student_link():
     school, student, user, db = _fixture()
     original_token = student.public_verification_token
+    original_version = student.public_credential_version
     _override(db, user)
     with TestClient(app) as client:
         disabled = client.put(
@@ -207,8 +225,67 @@ def test_admin_can_revoke_and_regenerate_one_student_link():
     assert regenerated.status_code == 200
     assert regenerated.json()["enabled"] is True
     assert student.public_verification_token != original_token
+    assert student.public_credential_version == original_version + 1
+    assert regenerated.json()["credential_status"] == "active"
+    assert regenerated.json()["credential_version"] == 2
     assert db.commits == 2
     assert len(db.added) == 2
+
+
+def test_signed_credential_is_verified_against_student_state():
+    school, student, _, db = _fixture()
+    token = issue_public_credential(
+        token_id=student.public_verification_token,
+        version=student.public_credential_version,
+        expires_at=student.public_credential_expires_at,
+    )
+    payload = decode_public_credential(token)
+    assert len(token) < 100
+    assert payload["typ"] == "public-student-verification"
+    assert payload["ver"] == 1
+
+    _override(db)
+    with TestClient(app) as client:
+        response = client.get(f"/public/verifications/{token}")
+
+    assert response.status_code == 200
+    assert response.json()["signature_verified"] is True
+    assert datetime.fromisoformat(
+        response.json()["credential_expires_at"]
+    ) == student.public_credential_expires_at
+
+
+def test_tampered_expired_and_stale_signed_credentials_are_rejected():
+    school, student, _, db = _fixture()
+    token = issue_public_credential(
+        token_id=student.public_verification_token,
+        version=student.public_credential_version,
+        expires_at=student.public_credential_expires_at,
+    )
+    expired = issue_public_credential(
+        token_id=student.public_verification_token,
+        version=student.public_credential_version,
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    stale = issue_public_credential(
+        token_id=student.public_verification_token,
+        version=student.public_credential_version + 1,
+        expires_at=student.public_credential_expires_at,
+    )
+    tampered = f"{token[:-1]}{'A' if token[-1] != 'A' else 'B'}"
+
+    _override(db)
+    with TestClient(app) as client:
+        responses = [
+            client.get(f"/public/verifications/{value}")
+            for value in (tampered, expired, stale)
+        ]
+
+    assert [response.status_code for response in responses] == [404, 404, 404]
+    assert all(
+        response.json() == {"detail": "Verification record not found"}
+        for response in responses
+    )
 
 
 def test_public_verification_fields_reject_sensitive_and_duplicate_values():
@@ -275,3 +352,18 @@ def test_public_verification_migration_adds_revocable_tokens_and_is_head():
     assert "public_verification_token" in migration
     assert "public_verification_enabled" in migration
     assert "unique=True" in migration
+
+
+def test_signed_credential_migration_is_head_and_adds_lifecycle_metadata():
+    root = Path(__file__).parents[1]
+    migration = (
+        root
+        / "migrations"
+        / "versions"
+        / "c6d2e9f4a731_add_signed_public_credentials.py"
+    ).read_text(encoding="utf-8")
+    assert 'down_revision: Union[str, Sequence[str], None] = "b4f8c2a91d73"' in migration
+    assert "public_verification_validity_days" in migration
+    assert "public_credential_issued_at" in migration
+    assert "public_credential_expires_at" in migration
+    assert "public_credential_version" in migration

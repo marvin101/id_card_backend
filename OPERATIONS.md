@@ -30,6 +30,7 @@ The names below come from `app/core/config.py` and `.env.example`. Required valu
 | `DB_USER` | PostgreSQL user |
 | `DB_PASSWORD` | PostgreSQL password |
 | `SECRET_KEY` | JWT signing secret |
+| `CREDENTIAL_SIGNING_KEY` | Stable production-only signing secret for public student credentials |
 | `ALGORITHM` | JWT algorithm; defaults to `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access-token lifetime; defaults to `30` |
 | `SUPABASE_URL` | Supabase project URL used by Storage |
@@ -47,7 +48,7 @@ The names below come from `app/core/config.py` and `.env.example`. Required valu
 | `PUBLIC_APP_URL` | Canonical Flutter origin placed in student-verification QR links |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Controlled reverse-proxy hops used to resolve client addresses |
 
-Before deployment, confirm every required value is present, `SECRET_KEY` is a strong production-only value, the Vercel production origin is allowed by `CORS_ORIGINS`, and the trusted proxy-hop count matches Render's actual topology. Do not expose `SUPABASE_SECRET_KEY` or any database credential to Flutter Web.
+Before deployment, confirm every required value is present, `SECRET_KEY` and `CREDENTIAL_SIGNING_KEY` are separate strong production-only values, the Vercel production origin is allowed by `CORS_ORIGINS`, and the trusted proxy-hop count matches Render's actual topology. Do not expose signing keys, `SUPABASE_SECRET_KEY`, or any database credential to Flutter Web.
 
 ## Health and readiness
 
@@ -60,11 +61,11 @@ Use liveness to determine whether the FastAPI process responds. Use readiness be
 
 CampusID uses bearer access tokens. Their lifetime is controlled by `ACCESS_TOKEN_EXPIRE_MINUTES`. There is no refresh-token infrastructure; after expiration, clients must clear the session and the user must authenticate again.
 
-Changing `SECRET_KEY` invalidates all JWTs signed with the previous key. Plan that rotation as a forced sign-in event and verify authentication immediately afterward.
+Changing `SECRET_KEY` invalidates all login JWTs signed with the previous key. Plan that rotation as a forced sign-in event and verify authentication immediately afterward. Changing `CREDENTIAL_SIGNING_KEY` invalidates every signed credential already printed on a card; rotate it only through an explicit card-reissuance incident procedure. When the dedicated key is omitted, credentials fall back to `SECRET_KEY`, so a login-key rotation also invalidates them.
 
 ## Logging
 
-Public-form, public-design, and student-verification tokens are revocable capabilities carried in URL paths. Run Uvicorn with `--no-access-log` so application access logs do not persist those tokens; application and server error logging remains enabled. Review Render or any upstream proxy logging separately and configure path redaction or suitably restricted retention before launch. Do not log bearer tokens, passwords, raw uploads, student record bodies, or capability URLs.
+Public-form and public-design tokens, legacy student-verification tokens, and signed student credentials are revocable capabilities carried in URL paths. Run Uvicorn with `--no-access-log` so application access logs do not persist those tokens; application and server error logging remains enabled. Review Render or any upstream proxy logging separately and configure path redaction or suitably restricted retention before launch. Do not log bearer tokens, passwords, raw uploads, student record bodies, or capability URLs.
 
 ## Authentication rate limiting
 
@@ -75,9 +76,9 @@ The application protects login, registration, public forms, public-design previe
 If one card or URL is exposed unexpectedly, disable that student's link first,
 then regenerate it and reprint the card after the incident is reviewed. If the
 scope is uncertain, disable school-wide public verification to revoke all links
-immediately without deleting their tokens. Do not rotate the JWT `SECRET_KEY` for
-a verification-link incident; the capability is independent of authentication
-tokens. Record the affected school/student identifiers and actions in the
+immediately without deleting their tokens. Do not rotate either signing key for
+a single-link incident; regenerate the affected credential instead. Record the
+affected school/student identifiers and actions in the
 approved incident system without copying the public capability URL.
 
 Because limiter state is not shared, scaling to multiple workers or instances multiplies the effective allowance. Before horizontal scaling, use an appropriate shared or edge control, then decide whether the application limiter should remain enabled to avoid an unintended double limit.
