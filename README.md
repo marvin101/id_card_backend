@@ -4,9 +4,9 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 
 ## Current release
 
-- **CampusID v0.8.0** — the Designer v2 and secure student-verification release.
-- Adds validated Designer v2 persistence, scoped QR and barcode payloads, signed time-bounded verification credentials, school-controlled public disclosure, and hardened anonymous verification reads.
-- Includes the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, dynamic student fields, and card/PDF workflows from earlier milestones. CampusID remains pre-1.0 while advanced print production and other roadmap modules continue to mature.
+- **CampusID v0.9.0** — the print-production, barcode, and signed-credential release.
+- Adds two-sided Designer persistence, scoped QR and barcode payloads, signed time-bounded verification credentials, school-controlled public disclosure, and hardened anonymous verification reads.
+- Includes duplex PDF production, Print Basket, A4/Letter imposition, calibration and reusable print presets alongside the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, and dynamic student fields. CampusID remains pre-1.0 while identity and collaboration workflows continue to mature.
 
 ## Architecture
 
@@ -327,13 +327,10 @@ The built-in limiter is process local. For the normal Render proxy topology, `AU
 
 CampusID follows Semantic Versioning: `MAJOR.MINOR.PATCH`. Backend and Flutter currently share one product version. The API's authoritative version is `app/version.py`, and FastAPI exposes it in OpenAPI metadata.
 
-The current release is `0.8.0`: `0.6.x` represented Public Forms, `0.7.0` added the Excel Grid, and `0.8.0` delivers Designer v2, flexible QR payloads, and secure student-verification links. Pre-1.0 minor releases may still introduce substantial product changes.
+The current release is `0.9.0`: `0.6.x` represented Public Forms, `0.7.0` added the Excel Grid, `0.8.0` delivered Designer v2 and flexible QR payloads, and `0.9.0` adds production printing, supported barcode formats, two-sided cards, and signed time-bounded credentials. Pre-1.0 minor releases may still introduce substantial product changes.
 
 ## Roadmap
 
-- Advanced print production and Print Basket (duplex output, production calibration, and reusable client-side print presets complete)
-- Barcode formats (Code 128, Code 39, EAN-13, and Data Matrix complete)
-- Advanced signed/time-bounded digital credentials (issuance, expiry, versioned regeneration, and public signature status complete)
 - Designer v2 remaining fidelity and contract hardening
 - Teacher and non-teaching staff workflows
 - School collaboration

@@ -12,7 +12,7 @@ Record the release owner, candidate Git commit IDs, migration revision, verifica
 
 ## Backend candidate
 
-- [ ] `app/version.py`, FastAPI OpenAPI metadata, both changelogs, and Flutter package metadata identify the candidate as `0.8.0` / `0.8.0+8`.
+- [ ] `app/version.py`, FastAPI OpenAPI metadata, both changelogs, and Flutter package metadata identify the candidate as `0.9.0` / `0.9.0+9`.
 - [ ] GitHub Backend CI passes for the release candidate.
 - [ ] `python -m pytest` passes.
 - [ ] `python -m compileall app` passes.
@@ -86,6 +86,10 @@ local Flutter release build
 - [ ] A stale second Designer session receives `409`, preserves local edits, and can reload the latest template.
 - [ ] Single-card generation works and output is reviewed.
 - [ ] Bulk PDF generation works and representative output is reviewed.
+- [ ] Front/back Designer documents survive save and reopen, and Cards preview can switch between both sides.
+- [ ] Print Basket, A4 and Letter imposition, front-only and duplex page ordering, long-/short-edge mirroring, crop marks, and page counts have been reviewed.
+- [ ] Front/back calibration offsets and printable alignment targets have been physically printed and measured.
+- [ ] Code 128, Code 39, EAN-13, and Data Matrix output from representative PDFs scans successfully with approved real scanners/apps.
 - [ ] Public design sharing can be enabled, fetched anonymously, disabled, and regenerated; old tokens return the generic `404`.
 - [ ] Public student verification can be enabled with scoped fields and validity days; QR scans show a verified signature and expiry, school/student disabling returns the generic `404`, tampering/expiry fails closed, and regeneration invalidates the old credential.
 - [ ] An expired session clears local auth/school state and returns the user to sign-in with the session-expired message.

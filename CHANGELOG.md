@@ -8,6 +8,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-11
+
 ### Added
 
 - Added optional back-side Designer documents to card templates and public
