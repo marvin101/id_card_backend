@@ -21,6 +21,7 @@ from app.core.database import Base
 
 
 if TYPE_CHECKING:
+    from app.models.personnel import Personnel
     from app.models.school import School
     from app.models.student import Student
 
@@ -41,7 +42,7 @@ class CustomFieldDefinition(Base):
             "display_order",
         ),
         CheckConstraint(
-            "entity_type IN ('student')",
+            "entity_type IN ('student', 'teacher', 'staff')",
             name="ck_custom_field_entity_type",
         ),
         CheckConstraint(
@@ -89,6 +90,10 @@ class CustomFieldDefinition(Base):
         back_populates="field_definition",
         passive_deletes=True,
     )
+    personnel_values: Mapped[list["PersonnelCustomFieldValue"]] = relationship(
+        back_populates="field_definition",
+        passive_deletes=True,
+    )
 
 
 class StudentCustomFieldValue(Base):
@@ -124,4 +129,40 @@ class StudentCustomFieldValue(Base):
     student: Mapped["Student"] = relationship(back_populates="custom_field_values")
     field_definition: Mapped["CustomFieldDefinition"] = relationship(
         back_populates="student_values"
+    )
+
+
+class PersonnelCustomFieldValue(Base):
+    __tablename__ = "personnel_custom_field_values"
+    __table_args__ = (
+        UniqueConstraint(
+            "personnel_id",
+            "field_definition_id",
+            name="uq_personnel_custom_field_value",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    personnel_id: Mapped[int] = mapped_column(
+        ForeignKey("personnel.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    field_definition_id: Mapped[int] = mapped_column(
+        ForeignKey("custom_field_definitions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    personnel: Mapped["Personnel"] = relationship(back_populates="custom_field_values")
+    field_definition: Mapped["CustomFieldDefinition"] = relationship(
+        back_populates="personnel_values"
     )

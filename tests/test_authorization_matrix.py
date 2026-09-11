@@ -12,6 +12,7 @@ from app.core.school_access import (
     TEACHER_ROLE,
     is_platform_admin,
     require_card_data_access,
+    require_identity_data_access,
     require_card_operator,
     require_school_access,
     require_school_admin,
@@ -60,6 +61,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
         self.assertTrue(is_platform_admin(user))
         self.assertIsNone(require_school_access(db, user, 10))
         self.assertIsNone(require_card_data_access(db, user, 10))
+        self.assertIsNone(require_identity_data_access(db, user, 10))
         self.assertIsNone(require_school_admin(db, user, 10, "forbidden"))
         self.assertIsNone(
             require_school_role_management(
@@ -81,6 +83,7 @@ class AuthorizationMatrixTests(unittest.TestCase):
 
         self.assertIs(require_school_access(db, user, 10), access)
         self.assertIs(require_card_data_access(db, user, 10), access)
+        self.assertIs(require_identity_data_access(db, user, 10), access)
         self.assertIs(require_school_admin(db, user, 10, "forbidden"), access)
         self.assertIsNone(
             require_school_role_management(
@@ -153,6 +156,9 @@ class AuthorizationMatrixTests(unittest.TestCase):
                 self.assertIs(require_school_access(db, user, 10), access)
                 self.assert_forbidden(
                     lambda: require_card_data_access(db, user, 10)
+                )
+                self.assert_forbidden(
+                    lambda: require_identity_data_access(db, user, 10)
                 )
 
     def test_missing_or_revoked_membership_is_denied(self):

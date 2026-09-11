@@ -141,13 +141,13 @@ def require_school_admin(
     )
 
 
-def require_card_data_access(
+def require_identity_data_access(
     db: Session,
     current_user: User,
     school_id: int,
-    detail: str = "Only a school administrator or card operator can access student card data",
+    detail: str = "Only a school administrator or card operator can access identity card data",
 ) -> UserSchoolAccess | None:
-    """Allow card-data work only within the user's assigned school.
+    """Allow identity-card work only within the user's assigned school.
 
     Platform administrators bypass school membership. School administrators
     (including legacy ``admin`` rows) and card operators may view, create,
@@ -169,6 +169,16 @@ def require_card_data_access(
         )
 
     return access
+
+
+def require_card_data_access(
+    db: Session,
+    current_user: User,
+    school_id: int,
+    detail: str = "Only a school administrator or card operator can access student card data",
+) -> UserSchoolAccess | None:
+    """Backward-compatible Student card-data authorization wrapper."""
+    return require_identity_data_access(db, current_user, school_id, detail)
 
 
 def require_school_role_management(
