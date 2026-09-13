@@ -114,6 +114,9 @@ def _validate_image(
 
 def inspect_zip(
     content: bytes,
+    *,
+    identifier_key: str = "admission_no",
+    identifier_label: str = "admission number",
 ) -> list[dict]:
 
     validate_archive_size(content)
@@ -168,7 +171,7 @@ def inspect_zip(
 
     result: list[dict] = []
 
-    seen_admission_numbers: set[str] = set()
+    seen_identifiers: set[str] = set()
 
     for info in infos:
 
@@ -182,7 +185,7 @@ def inspect_zip(
             .lower()
         )
 
-        admission_no = admission_no_from_filename(
+        identifier = admission_no_from_filename(
             filename
         )
 
@@ -191,7 +194,7 @@ def inspect_zip(
             result.append(
                 {
                     "filename": filename,
-                    "admission_no": admission_no,
+                    identifier_key: identifier,
                     "extension": extension,
                     "file_size": info.file_size,
                     "status": "invalid",
@@ -204,37 +207,37 @@ def inspect_zip(
 
             continue
 
-        if not admission_no:
+        if not identifier:
 
             result.append(
                 {
                     "filename": filename,
-                    "admission_no": "",
+                    identifier_key: "",
                     "extension": extension,
                     "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
                         "Filename must contain "
-                        "an admission number."
+                        f"a {identifier_label}."
                     ),
                 }
             )
 
             continue
 
-        admission_key = admission_no.casefold()
+        identifier_value = identifier.casefold()
 
-        if admission_key in seen_admission_numbers:
+        if identifier_value in seen_identifiers:
 
             result.append(
                 {
                     "filename": filename,
-                    "admission_no": admission_no,
+                    identifier_key: identifier,
                     "extension": extension,
                     "file_size": info.file_size,
                     "status": "invalid",
                     "detail": (
-                        "Duplicate admission number "
+                        f"Duplicate {identifier_label} "
                         "in archive."
                     ),
                 }
@@ -242,8 +245,8 @@ def inspect_zip(
 
             continue
 
-        seen_admission_numbers.add(
-            admission_key
+        seen_identifiers.add(
+            identifier_value
         )
 
         if info.file_size > MAX_IMAGE_SIZE:
@@ -251,7 +254,7 @@ def inspect_zip(
             result.append(
                 {
                     "filename": filename,
-                    "admission_no": admission_no,
+                    identifier_key: identifier,
                     "extension": extension,
                     "file_size": info.file_size,
                     "status": "invalid",
@@ -276,7 +279,7 @@ def inspect_zip(
             result.append(
                 {
                     "filename": filename,
-                    "admission_no": admission_no,
+                    identifier_key: identifier,
                     "extension": extension,
                     "file_size": info.file_size,
                     "status": "invalid",
@@ -289,7 +292,7 @@ def inspect_zip(
         result.append(
             {
                 "filename": filename,
-                "admission_no": admission_no,
+                identifier_key: identifier,
                 "status": "pending",
                 "content": image_content,
                 "extension": extension,

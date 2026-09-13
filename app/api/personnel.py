@@ -108,7 +108,7 @@ def _ensure_employee_no_available(
 ) -> None:
     query = select(Personnel.id).where(
         Personnel.school_id == school_id,
-        Personnel.employee_no == employee_no,
+        func.lower(Personnel.employee_no) == employee_no.casefold(),
     )
     if exclude_id is not None:
         query = query.where(Personnel.id != exclude_id)

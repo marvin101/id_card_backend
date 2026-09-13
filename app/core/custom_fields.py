@@ -94,6 +94,7 @@ def validate_personnel_custom_fields(
     submitted: list[StudentCustomFieldInput],
     *,
     require_all: bool,
+    definitions: list[CustomFieldDefinition] | None = None,
 ) -> list[tuple[CustomFieldDefinition, str]]:
     """Validate personnel values against the definitions for their exact type."""
     uuids = [item.field_uuid for item in submitted]
@@ -102,8 +103,16 @@ def validate_personnel_custom_fields(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Duplicate custom field UUID submitted",
         )
-    definitions = (
-        db.execute(
+    scoped_definitions = (
+        [
+            definition
+            for definition in definitions
+            if definition.school_id == school_id
+            and definition.entity_type == personnel_type
+            and definition.uuid in uuids
+        ]
+        if definitions is not None
+        else db.execute(
             select(CustomFieldDefinition).where(
                 CustomFieldDefinition.uuid.in_(uuids),
                 CustomFieldDefinition.school_id == school_id,
@@ -113,27 +122,38 @@ def validate_personnel_custom_fields(
         if uuids
         else []
     )
-    by_uuid = {definition.uuid: definition for definition in definitions}
+    by_uuid = {definition.uuid: definition for definition in scoped_definitions}
     if len(by_uuid) != len(uuids):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Unknown custom field or field does not belong to this school and personnel type",
         )
-    inactive = [item.label for item in definitions if not item.is_active]
+    inactive = [item.label for item in scoped_definitions if not item.is_active]
     if inactive:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Inactive custom field cannot be submitted: {inactive[0]}",
         )
     if require_all:
-        required = db.execute(
-            select(CustomFieldDefinition).where(
-                CustomFieldDefinition.school_id == school_id,
-                CustomFieldDefinition.entity_type == personnel_type,
-                CustomFieldDefinition.is_active.is_(True),
-                CustomFieldDefinition.is_required.is_(True),
-            )
-        ).scalars().all()
+        required = (
+            [
+                definition
+                for definition in definitions
+                if definition.school_id == school_id
+                and definition.entity_type == personnel_type
+                and definition.is_active
+                and definition.is_required
+            ]
+            if definitions is not None
+            else db.execute(
+                select(CustomFieldDefinition).where(
+                    CustomFieldDefinition.school_id == school_id,
+                    CustomFieldDefinition.entity_type == personnel_type,
+                    CustomFieldDefinition.is_active.is_(True),
+                    CustomFieldDefinition.is_required.is_(True),
+                )
+            ).scalars().all()
+        )
         missing = [item.label for item in required if item.uuid not in by_uuid]
         if missing:
             raise HTTPException(

@@ -12,6 +12,20 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
   school/type-scoped custom fields, audited photo upload/removal, and
   personnel-safe Designer/QR/barcode binding keys while preserving student
   template compatibility.
+- Added type-scoped Teacher/Staff CSV and XLSX import with downloadable XLSX
+  templates, deterministic mapping suggestions, preview, typed custom-field
+  validation, duplicate employee-number detection, and atomic commit/audit.
+- Added Teacher/Staff bulk photo ZIP import using employee-number filenames,
+  metadata-only manifests, school/import-scoped temporary object storage,
+  preview summaries, guarded promotion, replacement audit, and cleanup.
+- Added a bounded Teacher/Staff Excel Grid GET/PATCH API with search, status,
+  department and designation filters, optimistic concurrency, atomic
+  prevalidation, type-scoped custom fields, uniqueness checks, and
+  change-only personnel audit events.
+- Personnel public verification credentials remain deferred: the current
+  school disclosure policy and credential columns are student-specific, so a
+  safe purpose-separated implementation requires an explicit policy/migration
+  design rather than reusing student tokens implicitly.
 
 ## [0.9.0] - 2026-09-11
 

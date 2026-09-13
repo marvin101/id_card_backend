@@ -529,6 +529,12 @@ def preview_bulk_student_photos(
             detail="Bulk photo upload was not found.",
         )
 
+    if any(item.get("personnel_type") for item in manifest.manifest):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bulk photo upload was not found.",
+        )
+
     if manifest.expires_at <= datetime.now(
         timezone.utc
     ):
@@ -593,6 +599,12 @@ def commit_bulk_student_photos(
     ).scalar_one_or_none()
 
     if manifest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Bulk photo upload was not found.",
+        )
+
+    if any(item.get("personnel_type") for item in manifest.manifest):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Bulk photo upload was not found.",

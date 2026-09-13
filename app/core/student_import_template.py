@@ -26,7 +26,12 @@ def student_import_template_filename(school_name: str) -> str:
     return f"student_import_template_{slug or 'school'}.xlsx"
 
 
-def build_student_import_template(fields: list[StudentImportField]) -> bytes:
+def build_student_import_template(
+    fields: list[StudentImportField],
+    *,
+    sheet_name: str = "Students",
+    entity_label: str = "student",
+) -> bytes:
     """Build a header-only XLSX using the authoritative import field list.
 
     Required columns use the red header style and optional columns use the blue
@@ -34,7 +39,7 @@ def build_student_import_template(fields: list[StudentImportField]) -> bytes:
     suggestions recognize every generated column deterministically.
     """
     if not fields:
-        raise ValueError("A student import template requires at least one field")
+        raise ValueError(f"A {entity_label} import template requires at least one field")
 
     columns = "".join(
         f'<col min="{index}" max="{index}" width="{_column_width(field.label):.1f}" customWidth="1"/>'
@@ -67,9 +72,9 @@ def build_student_import_template(fields: list[StudentImportField]) -> bytes:
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
 </Relationships>''',
-        "xl/workbook.xml": '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        "xl/workbook.xml": f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <sheets><sheet name="Students" sheetId="1" r:id="rId1"/></sheets>
+  <sheets><sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>
 </workbook>''',
         "xl/_rels/workbook.xml.rels": '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">

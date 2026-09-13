@@ -28,7 +28,12 @@ def _cell_text(value: Any) -> str:
     return str(value).strip()
 
 
-def _validate_table(headers: list[Any], rows: list[list[Any]]) -> tuple[list[str], list[dict[str, str]]]:
+def _validate_table(
+    headers: list[Any],
+    rows: list[list[Any]],
+    *,
+    entity_label: str = "student",
+) -> tuple[list[str], list[dict[str, str]]]:
     normalized_headers = [_cell_text(value) for value in headers]
     if not normalized_headers or not any(normalized_headers):
         raise HTTPException(status_code=422, detail="The spreadsheet has no header row")
@@ -45,7 +50,10 @@ def _validate_table(headers: list[Any], rows: list[list[Any]]) -> tuple[list[str
         if any(row.values()):
             mapped_rows.append(row)
     if not mapped_rows:
-        raise HTTPException(status_code=422, detail="The spreadsheet has no student rows")
+        raise HTTPException(
+            status_code=422,
+            detail=f"The spreadsheet has no {entity_label} rows",
+        )
     if len(mapped_rows) > MAX_IMPORT_ROWS:
         raise HTTPException(status_code=422, detail=f"Imports are limited to {MAX_IMPORT_ROWS} rows")
     return normalized_headers, mapped_rows
@@ -137,7 +145,11 @@ def _read_xlsx(content: bytes) -> tuple[list[Any], list[list[Any]]]:
     return table[0], table[1:]
 
 
-async def parse_student_upload(file: UploadFile) -> tuple[list[str], list[dict[str, str]]]:
+async def parse_student_upload(
+    file: UploadFile,
+    *,
+    entity_label: str = "student",
+) -> tuple[list[str], list[dict[str, str]]]:
     content = await file.read(MAX_IMPORT_BYTES + 1)
     if len(content) > MAX_IMPORT_BYTES:
         raise HTTPException(status_code=413, detail="Import file exceeds the 5 MB limit")
@@ -150,22 +162,36 @@ async def parse_student_upload(file: UploadFile) -> tuple[list[str], list[dict[s
         table = list(csv.reader(io.StringIO(text)))
         if not table:
             raise HTTPException(status_code=422, detail="The CSV file is empty")
-        return _validate_table(table[0], table[1:])
+        return _validate_table(table[0], table[1:], entity_label=entity_label)
     if suffix == ".xlsx":
         headers, rows = _read_xlsx(content)
-        return _validate_table(headers, rows)
+        return _validate_table(headers, rows, entity_label=entity_label)
     raise HTTPException(status_code=422, detail="Only CSV and XLSX files are supported")
 
 
-def save_import_manifest(*, school_uuid: UUID, user_id: int, filename: str, headers: list[str], rows: list[dict[str, str]]) -> UUID:
+def save_import_manifest(
+    *,
+    school_uuid: UUID,
+    user_id: int,
+    filename: str,
+    headers: list[str],
+    rows: list[dict[str, str]],
+    purpose: str = "student",
+) -> UUID:
     IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     upload_id = uuid4()
-    manifest = {"upload_id": str(upload_id), "school_uuid": str(school_uuid), "user_id": user_id, "filename": filename, "created_at": datetime.now(timezone.utc).timestamp(), "headers": headers, "rows": rows}
+    manifest = {"upload_id": str(upload_id), "school_uuid": str(school_uuid), "user_id": user_id, "filename": filename, "created_at": datetime.now(timezone.utc).timestamp(), "purpose": purpose, "headers": headers, "rows": rows}
     (IMPORT_DIR / f"{upload_id}.json").write_text(json.dumps(manifest), encoding="utf-8")
     return upload_id
 
 
-def load_import_manifest(*, upload_id: UUID, school_uuid: UUID, user_id: int) -> dict[str, Any]:
+def load_import_manifest(
+    *,
+    upload_id: UUID,
+    school_uuid: UUID,
+    user_id: int,
+    purpose: str = "student",
+) -> dict[str, Any]:
     path = IMPORT_DIR / f"{upload_id}.json"
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -177,6 +203,10 @@ def load_import_manifest(*, upload_id: UUID, school_uuid: UUID, user_id: int) ->
         raise HTTPException(status_code=404, detail="Import upload not found or expired")
     if manifest.get("school_uuid") != str(school_uuid) or manifest.get("user_id") != user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This import belongs to another user or school")
+    # Manifests created before purpose separation are student-only. This keeps
+    # existing uploads working while preventing cross-workflow replay.
+    if manifest.get("purpose", "student") != purpose:
+        raise HTTPException(status_code=404, detail="Import upload not found or expired")
     return manifest
 
 
