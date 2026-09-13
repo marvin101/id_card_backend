@@ -145,6 +145,31 @@ def save_student_photo(
     return str(public_url)
 
 
+def save_personnel_photo(
+    school_uuid: UUID,
+    personnel_uuid: UUID,
+    content: bytes,
+    content_type: str | None,
+) -> str:
+    try:
+        extension = validate_student_photo(content, content_type)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("Student photo", "Personnel photo")) from exc
+    storage_path = (
+        f"schools/{school_uuid}/personnel/{personnel_uuid}/"
+        f"photo_{uuid4().hex}{extension}"
+    )
+    try:
+        supabase.storage.from_(SUPABASE_BUCKET).upload(
+            path=storage_path,
+            file=content,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+    except Exception as exc:
+        raise StorageError("Failed to upload personnel photo") from exc
+    return str(supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path))
+
+
 def save_bulk_photo_temp(
     *,
     school_uuid: UUID,
@@ -281,6 +306,48 @@ def managed_student_photo_storage_path(
     ):
         return None
 
+    return candidate
+
+
+def managed_personnel_photo_storage_path(
+    photo_path: str | None,
+    personnel_uuid: UUID | None = None,
+    school_uuid: UUID | None = None,
+) -> str | None:
+    if not photo_path or not photo_path.strip():
+        return None
+    candidate = photo_path.strip()
+    if candidate.startswith(("http://", "https://")):
+        parsed = urlsplit(candidate)
+        supabase_url = urlsplit(settings.supabase_url)
+        if (
+            parsed.scheme.lower() != supabase_url.scheme.lower()
+            or parsed.netloc.lower() != supabase_url.netloc.lower()
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        prefix = f"{supabase_url.path.rstrip('/')}/storage/v1/object/public/{SUPABASE_BUCKET}/"
+        if not parsed.path.startswith(prefix):
+            return None
+        candidate = unquote(parsed.path[len(prefix):])
+    elif "://" in candidate or candidate.startswith("/"):
+        return None
+    parts = candidate.split("/")
+    if len(parts) != 5 or parts[0] != "schools" or parts[2] != "personnel":
+        return None
+    try:
+        path_school_uuid = UUID(parts[1])
+        path_uuid = UUID(parts[3])
+    except ValueError:
+        return None
+    if school_uuid is not None and path_school_uuid != school_uuid:
+        return None
+    if personnel_uuid is not None and path_uuid != personnel_uuid:
+        return None
+    filename = parts[4]
+    if not filename.startswith("photo_") or Path(filename).suffix.lower() not in ALLOWED_IMAGE_TYPES.values():
+        return None
     return candidate
 
 

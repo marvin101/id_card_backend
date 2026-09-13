@@ -11,8 +11,10 @@ from app.core.personnel_audit import (
     record_personnel_audit,
     record_personnel_field_changes,
 )
+from app.core import file_storage
 from app.models.personnel import Personnel
-from app.schemas.personnel import PersonnelUpdate, PersonnelVerificationUpdate
+from app.schemas.card_template import SUPPORTED_BINDING_FIELDS
+from app.schemas.personnel import PersonnelCreate, PersonnelUpdate, PersonnelVerificationUpdate
 
 
 class _Db:
@@ -99,6 +101,46 @@ def test_personnel_schema_rejects_unknown_type_and_required_field_nulls():
         PersonnelUpdate(employee_no=None)
     with pytest.raises(ValidationError):
         PersonnelUpdate(full_name=None)
+
+
+def test_personnel_schema_accepts_typed_custom_field_values():
+    field_uuid = uuid4()
+    payload = PersonnelCreate(
+        personnel_type="staff",
+        employee_no="EMP-9",
+        full_name="Mira Das",
+        custom_fields=[{"field_uuid": field_uuid, "value": "+91 90000 00000"}],
+    )
+    assert payload.personnel_type.value == "staff"
+    assert payload.custom_fields[0].field_uuid == field_uuid
+
+
+def test_personnel_designer_bindings_preserve_student_compatibility():
+    assert {"admission_no", "class", "section"}.issubset(SUPPORTED_BINDING_FIELDS)
+    assert {
+        "id_number",
+        "employee_number",
+        "employee_no",
+        "designation",
+        "department",
+        "email",
+        "personnel_type",
+    }.issubset(SUPPORTED_BINDING_FIELDS)
+
+
+def test_personnel_photo_paths_are_school_and_identity_scoped():
+    school_uuid = uuid4()
+    personnel_uuid = uuid4()
+    path = f"schools/{school_uuid}/personnel/{personnel_uuid}/photo_abc.png"
+    assert file_storage.managed_personnel_photo_storage_path(
+        path, personnel_uuid, school_uuid
+    ) == path
+    assert file_storage.managed_personnel_photo_storage_path(
+        path, personnel_uuid, uuid4()
+    ) is None
+    assert file_storage.managed_personnel_photo_storage_path(
+        path, uuid4(), school_uuid
+    ) is None
 
 
 def test_personnel_model_derives_ready_and_printed_lifecycle():
@@ -192,6 +234,9 @@ def test_personnel_routes_are_registered():
     assert "get" in paths[f"{record}/history"]
     assert "post" in paths[f"{base}/batch-verify"]
     assert "post" in paths[f"{base}/batch-mark-printed"]
+    assert {"post", "delete"}.issubset(paths[f"{record}/photo"])
+    personnel_fields = "/schools/{school_uuid}/personnel-fields"
+    assert {"get", "post"}.issubset(paths[personnel_fields])
 
 
 def test_personnel_migration_is_single_head_with_rls_and_dynamic_field_types():

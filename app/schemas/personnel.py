@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.student import BloodGroup, VerificationStatus
+from app.schemas.student import BloodGroup, StudentCustomFieldInput, VerificationStatus
 
 
 class PersonnelType(str, Enum):
@@ -36,7 +36,7 @@ class _PersonnelData(BaseModel):
 
 
 class PersonnelCreate(_PersonnelData):
-    pass
+    custom_fields: list[StudentCustomFieldInput] = Field(default_factory=list)
 
 
 class PersonnelUpdate(BaseModel):
@@ -53,6 +53,7 @@ class PersonnelUpdate(BaseModel):
     mobile: str | None = Field(default=None, max_length=20)
     email: str | None = Field(default=None, max_length=150)
     address: str | None = Field(default=None, max_length=2000)
+    custom_fields: list[StudentCustomFieldInput] | None = None
 
     @field_validator(
         "personnel_type", "employee_no", "full_name", mode="before"

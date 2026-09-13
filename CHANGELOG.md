@@ -8,6 +8,11 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+- Productionized teacher and non-teaching staff identity records with typed,
+  school/type-scoped custom fields, audited photo upload/removal, and
+  personnel-safe Designer/QR/barcode binding keys while preserving student
+  template compatibility.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

@@ -46,6 +46,13 @@ SUPPORTED_BINDING_FIELDS = {
     "school_country",
     "school_postal_code",
     "principal_name",
+    "id_number",
+    "employee_number",
+    "employee_no",
+    "designation",
+    "department",
+    "email",
+    "personnel_type",
 }
 SUPPORTED_QR_BINDING_FIELDS = SUPPORTED_BINDING_FIELDS | {"verification_url"}
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
@@ -361,6 +368,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 or data["field"] not in SUPPORTED_BINDING_FIELDS
             )
         ):
+            # Keep the legacy wording because clients/tests may surface it.
             raise ValueError(f"{prefix} has an unknown student field binding")
         if element_type == "custom_field_text":
             field_uuid = data.get("field_uuid")

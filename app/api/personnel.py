@@ -1,11 +1,24 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import logging
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
+from app.core.custom_fields import (
+    replace_personnel_custom_fields,
+    validate_personnel_custom_fields,
+)
+from app.core.file_storage import (
+    MAX_STUDENT_PHOTO_SIZE,
+    StorageError,
+    delete_storage_object,
+    managed_personnel_photo_storage_path,
+    save_personnel_photo,
+)
 from app.core.personnel_audit import (
     record_personnel_audit,
     record_personnel_field_changes,
@@ -38,6 +51,7 @@ router = APIRouter(
     prefix="/schools/{school_uuid}/personnel",
     tags=["Personnel"],
 )
+logger = logging.getLogger(__name__)
 
 _BATCH_VERIFIABLE_STATUSES = frozenset(
     {VerificationStatus.PENDING.value, VerificationStatus.NEEDS_CORRECTION.value}
@@ -172,12 +186,16 @@ def create_personnel(
     _ensure_employee_no_available(
         db, school_id=school.id, employee_no=payload.employee_no
     )
-    values = payload.model_dump()
+    values = payload.model_dump(exclude={"custom_fields"})
     values["personnel_type"] = payload.personnel_type.value
     values["blood_group"] = payload.blood_group.value if payload.blood_group else None
     personnel = Personnel(school_id=school.id, **values)
     db.add(personnel)
     db.flush()
+    validated = validate_personnel_custom_fields(
+        db, school.id, personnel.personnel_type, payload.custom_fields, require_all=True
+    )
+    replace_personnel_custom_fields(db, personnel, validated)
     record_personnel_audit(
         db,
         personnel=personnel,
@@ -357,7 +375,31 @@ def update_personnel(
         "Only a school administrator or card operator can update personnel records",
     )
     personnel = _active_personnel(db, school.id, personnel_uuid)
-    values = payload.model_dump(exclude_unset=True)
+    values = payload.model_dump(exclude_unset=True, exclude={"custom_fields"})
+    fields_set = payload.model_fields_set
+    target_type = (
+        values["personnel_type"].value
+        if values.get("personnel_type") is not None
+        else personnel.personnel_type
+    )
+    type_changed = target_type != personnel.personnel_type
+    validated_custom_fields = None
+    before_custom_fields = {
+        str(item.field_definition.uuid): item.value
+        for item in personnel.custom_field_values
+        if item.field_definition.is_active
+    }
+    if "custom_fields" in fields_set:
+        if payload.custom_fields is None:
+            raise HTTPException(status_code=422, detail="custom_fields cannot be null")
+        validated_custom_fields = validate_personnel_custom_fields(
+            db, school.id, target_type, payload.custom_fields, require_all=True
+        )
+    elif type_changed:
+        # Never carry teacher-only fields onto a staff identity (or vice versa).
+        validated_custom_fields = validate_personnel_custom_fields(
+            db, school.id, target_type, [], require_all=True
+        )
     if values.get("personnel_type") is not None:
         values["personnel_type"] = values["personnel_type"].value
     if values.get("blood_group") is not None:
@@ -376,13 +418,127 @@ def update_personnel(
     }
     for field, value in values.items():
         setattr(personnel, field, value)
+    if validated_custom_fields is not None:
+        if type_changed:
+            for item in list(personnel.custom_field_values):
+                db.delete(item)
+            personnel.custom_field_values.clear()
+        replace_personnel_custom_fields(db, personnel, validated_custom_fields)
     record_personnel_field_changes(
         db, personnel=personnel, actor=current_user, changes=changes
     )
-    if not any(old != new for old, new in changes.values()):
+    custom_changed = False
+    if validated_custom_fields is not None:
+        after_custom_fields = {
+            str(definition.uuid): value for definition, value in validated_custom_fields
+        }
+        for field_uuid in sorted(set(before_custom_fields) | set(after_custom_fields)):
+            old, new = before_custom_fields.get(field_uuid), after_custom_fields.get(field_uuid)
+            if old != new:
+                custom_changed = True
+                record_personnel_audit(
+                    db,
+                    personnel=personnel,
+                    actor=current_user,
+                    event_type="personnel_field_updated",
+                    field_name=f"custom_fields.{field_uuid}",
+                    old_value=old,
+                    new_value=new,
+                )
+    if not any(old != new for old, new in changes.values()) and not custom_changed:
         return personnel
     db.commit()
     db.refresh(personnel)
+    return personnel
+
+
+@router.post("/{personnel_uuid}/photo", response_model=PersonnelResponse)
+async def upload_personnel_photo(
+    school_uuid: UUID,
+    personnel_uuid: UUID,
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_identity_data_access(
+        db, current_user, school.id,
+        "Only a school administrator or card operator can upload personnel photos",
+    )
+    personnel = _active_personnel(db, school.id, personnel_uuid)
+    content = await photo.read(MAX_STUDENT_PHOTO_SIZE + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="Uploaded photo is empty.")
+    previous = personnel.photo_path
+    try:
+        saved = save_personnel_photo(
+            school.uuid, personnel.uuid, content, photo.content_type
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except StorageError as exc:
+        logger.error("Personnel photo storage failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="Personnel photo storage is currently unavailable.") from exc
+    personnel.photo_path = saved
+    record_personnel_audit(
+        db, personnel=personnel, actor=current_user,
+        event_type="personnel_photo_replaced" if previous else "personnel_photo_added",
+        field_name="photo_path", old_value=previous, new_value=saved,
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        path = managed_personnel_photo_storage_path(
+            saved, personnel.uuid, school.uuid
+        )
+        if path:
+            try:
+                delete_storage_object(path)
+            except Exception:
+                logger.warning("Failed to clean up orphaned personnel photo", exc_info=True)
+        raise
+    db.refresh(personnel)
+    old_path = managed_personnel_photo_storage_path(
+        previous, personnel.uuid, school.uuid
+    )
+    if old_path:
+        try:
+            delete_storage_object(old_path)
+        except Exception:
+            logger.warning("Failed to remove replaced personnel photo", exc_info=True)
+    return personnel
+
+
+@router.delete("/{personnel_uuid}/photo", response_model=PersonnelResponse)
+def remove_personnel_photo(
+    school_uuid: UUID,
+    personnel_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_identity_data_access(db, current_user, school.id)
+    personnel = _active_personnel(db, school.id, personnel_uuid)
+    previous = personnel.photo_path
+    if previous is None:
+        return personnel
+    personnel.photo_path = None
+    record_personnel_audit(
+        db, personnel=personnel, actor=current_user,
+        event_type="personnel_photo_removed", field_name="photo_path",
+        old_value=previous, new_value=None,
+    )
+    db.commit()
+    db.refresh(personnel)
+    path = managed_personnel_photo_storage_path(
+        previous, personnel.uuid, school.uuid
+    )
+    if path:
+        try:
+            delete_storage_object(path)
+        except Exception:
+            logger.warning("Failed to remove personnel photo object", exc_info=True)
     return personnel
 
 

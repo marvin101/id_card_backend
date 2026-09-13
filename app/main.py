@@ -19,6 +19,7 @@ from app.api.classes import router as classes_router
 from app.api.sections import router as sections_router
 from app.api.students import router as students_router
 from app.api.personnel import router as personnel_router
+from app.api.personnel_fields import router as personnel_fields_router
 from app.api.student_grid import router as student_grid_router
 from app.api.card_templates import public_router as public_designs_router, router as card_templates_router
 from app.api.student_fields import router as student_fields_router
@@ -67,6 +68,7 @@ api.include_router(sections_router)
 api.include_router(student_grid_router)
 api.include_router(students_router)
 api.include_router(personnel_router)
+api.include_router(personnel_fields_router)
 api.include_router(card_templates_router)
 api.include_router(public_designs_router)
 api.include_router(student_fields_router)
