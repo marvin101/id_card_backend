@@ -6,11 +6,11 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] Back up PostgreSQL and verify the documented restore procedure and owner.
 - [ ] Confirm the database revision with `python -m alembic current` and the single target head with `python -m alembic heads`.
-- [ ] Review every pending migration through `c6d2e9f4a731`, including credential timestamps/version backfill, validity defaults, and optional card-template back designs, and run `python -m alembic upgrade head` as an explicit release step.
+- [ ] Review every pending migration through `d7e4a10b9c82`, including credential lifecycle data, personnel records and type-scoped custom fields, and run `python -m alembic upgrade head` as an explicit release step.
 - [ ] Configure every variable listed in `.env.example`; use separate strong production-only `SECRET_KEY` and `CREDENTIAL_SIGNING_KEY` values and the exact approved frontend origins in `CORS_ORIGINS`.
 - [ ] Set `PUBLIC_APP_URL` to the canonical Vercel production origin and confirm `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` is reviewed.
 - [ ] Confirm Render's trusted proxy-hop count and that login, registration, public-form, public-design, and public-verification rate limiting remain enabled or have reviewed edge equivalents.
-- [ ] Confirm the Supabase Storage bucket policy, backup implications, and cleanup procedure for student photos and temporary bulk-import objects.
+- [ ] Confirm the Supabase Storage bucket policy, backup implications, and cleanup procedure for student/personnel photos and temporary bulk-import objects.
 - [ ] Replace or explicitly approve every Flutter launch placeholder, including the support address.
 - [ ] Run backend tests and compilation, Flutter tests and analysis, and both repositories' `git diff --check`.
 - [ ] Build Flutter Web with the approved API origin and copy `vercel.json` into `build/web` before deploying that directory.
@@ -19,7 +19,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] `GET /health` returns `200` without authentication.
 - [ ] `GET /health/check` returns `200`; a controlled database outage returns generic `503` without internal details.
-- [ ] `python -m alembic current` reports `c6d2e9f4a731` after migration.
+- [ ] `python -m alembic current` reports `d7e4a10b9c82` after migration.
 - [ ] Direct Supabase Data API access to application tables remains denied by RLS, including `bulk_photo_imports`.
 - [ ] Expected `400`, `401`, `403`, `404`, `409`, `413`, `422`, and `429` responses contain useful safe messages; an induced server failure returns generic `500`/`502` without provider or SQL details.
 
@@ -29,6 +29,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Switch between two assigned schools and verify students, sessions, classes/sections, users, template, Cards, export scope, and public-share settings all reload with no stale data.
 - [ ] Update the school profile; create an academic session, class, and section; and manage an ordinary user role within the selected school.
 - [ ] Create and edit a student with custom fields and a photo; verify search/filter, grid edit, verification, history, and inactive/deleted behavior.
+- [ ] Create and edit both Teacher and Staff records with type-scoped custom fields and photos; verify lifecycle, history, imports, bulk photos, Excel Grid, cards, PDF export, and type-partitioned Print Basket behavior.
 - [ ] Preview and commit a spreadsheet import; preview and commit a bulk-photo ZIP; verify failure cleanup and school/user scoping.
 - [ ] Open Designer, add and edit a back side, save, reload, and compare both persisted documents exactly. Remove the back explicitly and confirm the template returns to front-only mode.
 - [ ] Open the same template in two sessions; save session one, confirm session two receives `409` with local edits intact, then reload latest.
