@@ -4,9 +4,9 @@ CampusID's FastAPI service is the security and data boundary for school-scoped i
 
 ## Current release
 
-- **CampusID v0.9.0** — the print-production, barcode, and signed-credential release.
-- Adds two-sided Designer persistence, scoped QR and barcode payloads, signed time-bounded verification credentials, school-controlled public disclosure, and hardened anonymous verification reads.
-- Includes duplex PDF production, Print Basket, A4/Letter imposition, calibration and reusable print presets alongside the Excel Grid, Public Forms, student lifecycle/audit controls, bulk imports, and dynamic student fields. CampusID remains pre-1.0 while identity and collaboration workflows continue to mature.
+- **CampusID v0.10.0** — the Teacher/Staff personnel workflow release.
+- Adds first-class Teacher/Staff CRUD, lifecycle and audit history, type-scoped custom fields, managed photos, Excel import, bulk-photo import, and the personnel Excel Grid.
+- Extends Designer bindings, QR/barcode data, card previews, PDF exports, and type-partitioned Print Baskets to personnel while preserving existing student workflows and signed student credentials. Personnel signed/public credentials remain deferred pending a purpose-separated design.
 
 ## Architecture
 
@@ -23,8 +23,9 @@ FastAPI API
        |                         |
        v                         v
 Supabase PostgreSQL       Supabase Storage
-schools, users, students,  school logos, student photos,
-forms, templates, audits   and temporary bulk-photo objects
+schools, users, students,  school logos, student/personnel photos,
+personnel, templates,      and temporary bulk-photo objects
+forms, audits
 ```
 
 The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage holds persistent media; Render's local filesystem is not production persistence.
@@ -38,12 +39,16 @@ The backend accesses PostgreSQL through SQLAlchemy and Alembic. Supabase Storage
 - School profile and logo management
 - Academic sessions, classes, and sections
 - School-scoped student CRUD, search, filtering, and photo management
+- School-scoped Teacher/Staff CRUD, lifecycle, audit history, and photo management
 - Dynamic per-school student fields
+- Typed, school/type-scoped personnel custom fields
 - Excel student import with template, upload, preview, and commit stages
+- Teacher/Staff Excel import and bulk-photo import workflows
 - Bulk student photo upload, matching preview, promotion, and cleanup
 - Pending / Needs Correction / Verified lifecycle, print/reprint tracking, and audit history
 - Public Forms with school branding, configured fields, optional or required photo, and anonymous submission
 - Excel Grid paging, filtering, search, inline bulk updates, conflict detection, and structured validation errors
+- Type-scoped Teacher/Staff Excel Grid with atomic validation and optimistic concurrency
 - Per-school Card Designer template storage
 - CORS, request-size controls, authentication/public-route throttling, and health endpoints
 - Signed, expiring, and revocable public student-verification credentials with school-controlled disclosure
@@ -56,8 +61,8 @@ FastAPI authorizes every protected request. Frontend visibility is only a usabil
 | Role | Backend scope |
 | --- | --- |
 | Platform Admin | Platform-wide access to active schools, elevated role assignment, school administration, and all application workflows |
-| School Admin | Assigned school(s); school structure/profile, ordinary Teacher/Staff assignments, students, lifecycle/audit, printing, templates, Public Forms, and imports |
-| Card Operator | Assigned school(s); student card data, photos, imports, grid editing, and printing; no school configuration or student deletion |
+| School Admin | Assigned school(s); school structure/profile, ordinary Teacher/Staff assignments, student/personnel lifecycle and audit, printing, templates, Public Forms, and imports |
+| Card Operator | Assigned school(s); student/personnel card data, photos, imports, grid editing, and printing; no school configuration or record deletion |
 | Teacher / Staff | Assigned-school supporting access; currently excluded from student/card-data operations |
 
 School-scope rules:
@@ -80,12 +85,17 @@ School-scope rules:
 | `/schools/{school_uuid}/classes` | Classes |
 | `/schools/{school_uuid}/classes/{class_uuid}/sections` | Sections |
 | `/schools/{school_uuid}/students` | Student CRUD, filters, photos, verification, print tracking, batch lifecycle actions, and history |
+| `/schools/{school_uuid}/personnel` | Teacher/Staff CRUD, filters, photos, verification, print tracking, batch lifecycle actions, and history |
 | `/schools/{school_uuid}/student-fields` | Dynamic student-field definitions and ordering |
+| `/schools/{school_uuid}/personnel-fields` | Type-scoped Teacher/Staff field definitions and ordering |
 | `/schools/{school_uuid}/students/imports` | Excel template, upload, preview, and commit |
+| `/schools/{school_uuid}/personnel/imports` | Teacher/Staff Excel template, upload, preview, and atomic commit |
 | `/schools/{school_uuid}/student-photos/bulk` | Bulk-photo upload, preview, and commit |
+| `/schools/{school_uuid}/personnel-photos/bulk` | Type-scoped personnel bulk-photo upload, preview, promotion, and cleanup |
 | `/schools/{school_uuid}/public-form` | Authenticated Public Form configuration and link regeneration |
 | `/public/forms/{token}` | Anonymous Public Form read; submissions use `/public/forms/{token}/submissions` |
 | `/schools/{school_uuid}/students/grid` | Bounded grid read and atomic bulk patch |
+| `/schools/{school_uuid}/personnel/grid` | Bounded, type-scoped personnel grid read and atomic bulk patch |
 | `/schools/{school_uuid}/card-template` | Per-school Card Designer template |
 | `/schools/{school_uuid}/card-template/public-share` | Administrator-only public-preview controls and link regeneration |
 | `/public/designs/{token}` | Anonymous read-only card-design preview using sample data |
@@ -156,9 +166,9 @@ Student history records meaningful field, lifecycle, photo, import, print, and P
 
 ## Bulk import and storage
 
-The Excel workflow provides a generated template, accepts an upload, returns a validation preview, and commits accepted rows only after confirmation. It validates academic relationships, required fields, duplicates, and configured custom fields.
+The student and type-scoped Teacher/Staff Excel workflows provide generated templates, accept uploads, return validation previews, and commit accepted rows atomically only after confirmation. They validate required fields, duplicates, configured custom fields, and student academic relationships where applicable.
 
-Bulk-photo uploads are staged as temporary objects in Supabase Storage. PostgreSQL manifests contain metadata only—never base64 content or raw image bytes. Preview matches staged files to school-scoped students; commit promotes accepted images to managed student-photo paths and updates records. Failure, expiry, and commit paths clean temporary or replaced objects as appropriate.
+Bulk-photo uploads are staged as temporary objects in Supabase Storage. PostgreSQL manifests contain metadata only—never base64 content or raw image bytes. Preview matches staged files to school-scoped students or type-scoped personnel; commit promotes accepted images to managed photo paths and updates records. Failure, expiry, and commit paths clean temporary or replaced objects as appropriate.
 
 ## Excel Grid API
 
@@ -319,7 +329,7 @@ Before deployment:
 2. Configure secrets and all required environment variables in Render.
 3. Confirm the Vercel production origin is allowed by CORS.
 4. Confirm Supabase Storage credentials and bucket policies support server-side logo/photo operations.
-5. Verify health, authentication, school scoping, Public Forms, imports, uploads, grid saves, templates, public verification, and PDF-facing data after deployment.
+5. Verify health, authentication, school scoping, Public Forms, student/personnel imports, uploads, grid saves, templates, public student verification, and PDF-facing data after deployment.
 
 The built-in limiter is process local. For the normal Render proxy topology, `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS=1` may be appropriate, but the deployed proxy chain must be verified. Multi-worker or multi-instance deployments need equivalent edge enforcement or a shared limiter.
 
@@ -327,15 +337,16 @@ The built-in limiter is process local. For the normal Render proxy topology, `AU
 
 CampusID follows Semantic Versioning: `MAJOR.MINOR.PATCH`. Backend and Flutter currently share one product version. The API's authoritative version is `app/version.py`, and FastAPI exposes it in OpenAPI metadata.
 
-The current release is `0.9.0`: `0.6.x` represented Public Forms, `0.7.0` added the Excel Grid, `0.8.0` delivered Designer v2 and flexible QR payloads, and `0.9.0` adds production printing, supported barcode formats, two-sided cards, and signed time-bounded credentials. Pre-1.0 minor releases may still introduce substantial product changes.
+The current release is `0.10.0`: `0.9.0` added production printing, supported barcode formats, two-sided cards, and signed time-bounded student credentials; `0.10.0` completes first-class Teacher/Staff identity, import, photo, grid, Designer, card, PDF, and Print Basket workflows. Pre-1.0 minor releases may still introduce substantial product changes.
 
 ## Roadmap
 
-- Designer v2 remaining fidelity and contract hardening
-- Teacher and non-teaching staff workflows
-- School collaboration
+- Personnel signed/public credentials with purpose-separated disclosure policy
+- Collaboration and review workflows
 - Photo Studio
+- Designer fidelity polish
 - White-label and lanyard workflows
+- Security, performance, and UX hardening toward 1.0
 - AI OCR (deferred)
 
 ## Related client

@@ -8,6 +8,10 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-14
+
+### Added
+
 - Productionized teacher and non-teaching staff identity records with typed,
   school/type-scoped custom fields, audited photo upload/removal, and
   personnel-safe Designer/QR/barcode binding keys while preserving student
@@ -22,10 +26,21 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
   department and designation filters, optimistic concurrency, atomic
   prevalidation, type-scoped custom fields, uniqueness checks, and
   change-only personnel audit events.
+- Enabled personnel card data for Designer previews, individual and bulk PDF
+  output, and type-partitioned Print Basket workflows in the Flutter client.
+
+### Security
+
+- Hardened Teacher/Staff authorization, school-boundary checks, purpose-scoped
+  import manifests, personnel audit history, and managed photo-path validation.
+
+### Deferred
+
 - Personnel public verification credentials remain deferred: the current
   school disclosure policy and credential columns are student-specific, so a
   safe purpose-separated implementation requires an explicit policy/migration
   design rather than reusing student tokens implicitly.
+- Student signed/public credentials remain unchanged in this release.
 
 ## [0.9.0] - 2026-09-11
 
