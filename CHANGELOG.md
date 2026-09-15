@@ -8,6 +8,10 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced backend import work with lazy Supabase Storage SDK/client initialization for more reliable Render startup.
+
 ## [0.10.0] - 2026-09-14
 
 ### Added

@@ -208,7 +208,7 @@ def test_student_photo_uploads_use_unique_versioned_non_overwrite_paths(monkeypa
     bucket = _StorageBucket()
     monkeypatch.setattr(
         file_storage,
-        "supabase",
+        "_supabase_client",
         SimpleNamespace(storage=_Storage(bucket)),
     )
     student_uuid = uuid4()
@@ -229,7 +229,7 @@ def test_bulk_temp_upload_uses_guarded_school_and_import_namespace(monkeypatch):
     bucket = _StorageBucket()
     monkeypatch.setattr(
         file_storage,
-        "supabase",
+        "_supabase_client",
         SimpleNamespace(storage=_Storage(bucket)),
     )
     school_uuid = uuid4()
@@ -271,7 +271,7 @@ def test_student_photo_upload_preserves_validated_extension(
     bucket = _StorageBucket()
     monkeypatch.setattr(
         file_storage,
-        "supabase",
+        "_supabase_client",
         SimpleNamespace(storage=_Storage(bucket)),
     )
     image_format = file_storage.ALLOWED_IMAGE_FORMATS[content_type]

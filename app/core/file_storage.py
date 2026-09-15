@@ -1,9 +1,9 @@
 from pathlib import Path
+from threading import Lock
 from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
 from PIL import Image
-from supabase import create_client
 
 from app.core.config import settings
 
@@ -32,10 +32,23 @@ ALLOWED_LOGO_EXTENSIONS = {
 }
 
 
-supabase = create_client(
-    settings.supabase_url,
-    settings.supabase_secret_key,
-)
+_supabase_client = None
+_supabase_client_lock = Lock()
+
+
+def get_supabase_client():
+    """Create one reusable client on first storage use, never during boot."""
+    global _supabase_client
+    if _supabase_client is None:
+        with _supabase_client_lock:
+            if _supabase_client is None:
+                from supabase import create_client
+
+                _supabase_client = create_client(
+                    settings.supabase_url,
+                    settings.supabase_secret_key,
+                )
+    return _supabase_client
 
 
 class StorageError(RuntimeError):
@@ -122,7 +135,7 @@ def save_student_photo(
     )
 
     try:
-        supabase.storage \
+        get_supabase_client().storage \
             .from_(SUPABASE_BUCKET) \
             .upload(
                 path=storage_path,
@@ -137,7 +150,7 @@ def save_student_photo(
         raise StorageError("Failed to upload student photo") from exc
 
     public_url = (
-        supabase.storage
+        get_supabase_client().storage
         .from_(SUPABASE_BUCKET)
         .get_public_url(storage_path)
     )
@@ -160,14 +173,14 @@ def save_personnel_photo(
         f"photo_{uuid4().hex}{extension}"
     )
     try:
-        supabase.storage.from_(SUPABASE_BUCKET).upload(
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
             path=storage_path,
             file=content,
             file_options={"content-type": content_type, "upsert": "false"},
         )
     except Exception as exc:
         raise StorageError("Failed to upload personnel photo") from exc
-    return str(supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path))
+    return str(get_supabase_client().storage.from_(SUPABASE_BUCKET).get_public_url(storage_path))
 
 
 def save_bulk_photo_temp(
@@ -185,7 +198,7 @@ def save_bulk_photo_temp(
     )
 
     try:
-        supabase.storage.from_(SUPABASE_BUCKET).upload(
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
             path=storage_path,
             file=content,
             file_options={
@@ -204,7 +217,7 @@ def save_bulk_photo_temp(
 def download_storage_object(storage_path: str) -> bytes:
     """Download an object for backend-side promotion without involving the DB."""
     try:
-        content = supabase.storage.from_(SUPABASE_BUCKET).download(storage_path)
+        content = get_supabase_client().storage.from_(SUPABASE_BUCKET).download(storage_path)
     except Exception as exc:
         raise StorageError(f"Failed to download stored media: {exc}") from exc
 
@@ -361,7 +374,7 @@ def save_school_logo(
     storage_path = f"schools/{school_uuid}/logos/{uuid4().hex}{extension}"
 
     try:
-        supabase.storage.from_(SUPABASE_BUCKET).upload(
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
             path=storage_path,
             file=content,
             file_options={
@@ -379,13 +392,13 @@ def get_storage_public_url(storage_path: str | None) -> str | None:
     if not storage_path:
         return None
     return str(
-        supabase.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
     )
 
 
 def delete_storage_object(storage_path: str) -> None:
     try:
-        supabase.storage.from_(SUPABASE_BUCKET).remove([storage_path])
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).remove([storage_path])
     except Exception as exc:
         raise StorageError(f"Failed to delete stored media: {exc}") from exc
 
@@ -396,7 +409,7 @@ def delete_student_photo(
     base_path = f"students/{student_uuid}"
 
     try:
-        files = supabase.storage \
+        files = get_supabase_client().storage \
             .from_(SUPABASE_BUCKET) \
             .list(base_path)
 
@@ -410,7 +423,7 @@ def delete_student_photo(
         ]
 
         if paths:
-            supabase.storage \
+            get_supabase_client().storage \
                 .from_(SUPABASE_BUCKET) \
                 .remove(paths)
 

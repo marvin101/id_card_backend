@@ -151,3 +151,25 @@ Record who performed the change, when it occurred, and the verification result i
 The current application has no safe automated Platform Administrator bootstrap or recovery workflow and intentionally exposes no bootstrap endpoint. The existing migration preserves authority for users who already had the legacy `is_platform_admin` flag; it does not create an initial administrator.
 
 Before launch, define and test a restricted, auditable provider-side procedure for creating the first Platform Administrator and recovering administrator access. Specify authorization, identity verification, execution, review, and rollback responsibilities. Until that runbook is approved and tested, Platform Administrator bootstrap/recovery is a release operations blocker.
+
+## Backend startup
+
+Recommended Render start command (single worker):
+
+```sh
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+Use `/health` as the Render liveness path. `/` intentionally returns 404;
+this is harmless and does not indicate a failed boot. `/health/check` checks
+DB readiness and returns 503 when unavailable. Boot does not connect to the DB.
+Supabase SDK import and client construction occur only on first storage use;
+the process reuses that client thereafter. First storage use therefore bears
+this initialization cost. Required settings validation still runs during import.
+No diagnostic BEFORE/AFTER pre-import command is needed as the normal default.
+
+For a future authorized rollout, retain existing environment values and version
+0.10.0; no schema migration is required. Verify port binding and `/health`, then
+login, readiness, public verification and photo/logo upload/delete. Local timing
+does not predict cold Render timing: compare fresh deploy logs before concluding
+that the platform timeout is resolved.
