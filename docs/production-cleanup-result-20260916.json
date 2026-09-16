@@ -1,0 +1,39 @@
+{
+  "executed_on": "2026-09-16",
+  "environment": "production Supabase",
+  "preserved_user": {
+    "uuid": "0cc576f8-0d30-4b82-b624-2f803551f93f",
+    "username": "testadmin",
+    "is_active": true,
+    "platform_role": "platform_admin",
+    "is_platform_admin": true
+  },
+  "deleted": {
+    "users": 12,
+    "schools": 3,
+    "students": 55,
+    "classes": 4,
+    "sections": 8,
+    "academic_sessions": 5,
+    "card_templates": 1,
+    "custom_field_definitions": 1,
+    "student_custom_field_values": 6,
+    "personnel": 2,
+    "personnel_audit_events": 2,
+    "student_audit_events": 16,
+    "school_access_requests": 2,
+    "user_school_access": 21,
+    "bulk_photo_imports": 4,
+    "public_forms": 1,
+    "storage_objects": 9
+  },
+  "verified": {
+    "only_testadmin_remains": true,
+    "approved_data_tables_empty": true,
+    "approved_storage_objects_unavailable": true,
+    "backend_health_ok_after_cleanup": true,
+    "backend_readiness_ok_after_cleanup": true
+  },
+  "production_migration_changed": false,
+  "recovery_snapshot": "C:\\Users\\smith\\AppData\\Local\\Temp\\campusid-cleanup-recovery-20260916.json.zlib.dpapi"
+}

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from uuid import UUID
@@ -10,6 +11,7 @@ from app.core.school_access import (
     LEGACY_SCHOOL_ADMIN_ROLE,
     SCHOOL_ADMIN_ROLE,
     is_platform_admin,
+    require_platform_admin,
     require_school_admin,
     require_school_role_management,
 )
@@ -24,7 +26,7 @@ from app.schemas.auth import  (
     SchoolUserAssignmentResponse,
     RegistrationSchoolResponse,
     UserCreate, 
-    UserResponse
+    UserResponse, AdminUserCreate, AdminUserUpdate
     )
 router = APIRouter(
     prefix="/users",
@@ -631,3 +633,94 @@ def revoke_school_access(
     db.commit()
 
     return None
+
+
+# Global account changes affect every school; only platform administrators may
+# perform them. School administrators retain existing school-scoped role APIs.
+@router.get("", response_model=list[UserResponse])
+def list_accounts(offset: int = 0, limit: int = 100, search: str = "",
+                  db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    require_platform_admin(current_user)
+    if offset < 0 or not 1 <= limit <= 200 or len(search) > 150:
+        raise HTTPException(422, "Invalid directory pagination")
+    query = select(User).order_by(User.full_name, User.id).offset(offset).limit(limit)
+    if search.strip():
+        term = search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(or_(User.username.ilike(f"%{term}%", escape="\\"),
+                               User.full_name.ilike(f"%{term}%", escape="\\")))
+    return db.execute(query).scalars().all()
+
+
+def _check_account_identity(db, username=None, email=None, exclude_id=None):
+    conditions = []
+    if username is not None:
+        conditions.append(User.username == username)
+    if email:
+        local, separator, domain = email.rpartition("@")
+        if not separator or not local or "." not in domain:
+            raise HTTPException(422, "Enter a valid email address")
+        conditions.append(func.lower(User.email) == email.lower())
+    if conditions:
+        query = select(User).where(or_(*conditions))
+        if exclude_id is not None:
+            query = query.where(User.id != exclude_id)
+        if db.execute(query).scalars().first() is not None:
+            raise HTTPException(409, "Username or email already exists")
+
+
+@router.post("/accounts", response_model=UserResponse, status_code=201)
+def create_account(data: AdminUserCreate, db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    require_platform_admin(current_user)
+    _check_account_identity(db, data.username, data.email)
+    values = data.model_dump(exclude={"password"})
+    values["full_name"] = values["full_name"].strip()
+    if not values["full_name"]:
+        raise HTTPException(422, "Full name cannot be empty")
+    user = User(**values, password_hash=hash_password(data.password), is_active=True,
+                is_platform_admin=False, platform_role=None)
+    db.add(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Username or email already exists") from None
+    return user
+
+
+@router.patch("/{user_uuid}/account", response_model=UserResponse)
+def update_account(user_uuid: UUID, data: AdminUserUpdate, db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    require_platform_admin(current_user)
+    # Lock critical administrators in a stable order before the target. This
+    # serializes concurrent demotions/deactivations and protects the last admin.
+    admins = db.execute(select(User).where(User.is_active.is_(True),
+        or_(User.platform_role == "platform_admin", User.is_platform_admin.is_(True)))
+        .order_by(User.id).with_for_update()).scalars().all()
+    user = db.execute(select(User).where(User.uuid == user_uuid).with_for_update()).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(404, "User not found")
+    values = data.model_dump(exclude_unset=True)
+    if current_user.id == user.id and (values.get("is_active") is False or "platform_role" in values):
+        raise HTTPException(409, "You cannot deactivate yourself or change your own platform role")
+    loses_admin = values.get("is_active") is False or ("platform_role" in values and values["platform_role"] is None)
+    if user.is_active and is_platform_admin(user) and loses_admin and len(admins) <= 1:
+        raise HTTPException(409, "The last active platform administrator must be retained")
+    _check_account_identity(db, email=values.get("email"), exclude_id=user.id)
+    if "password" in values:
+        user.password_hash = hash_password(values.pop("password"))
+    if "platform_role" in values:
+        user.is_platform_admin = values["platform_role"] == "platform_admin"
+    for name, value in values.items():
+        setattr(user, name, value.strip() if isinstance(value, str) else value)
+    if "is_active" in data.model_fields_set or "password" in data.model_fields_set:
+        from app.core.auth_sessions import revoke_user_sessions
+        revoke_user_sessions(db, user.id)
+    try:
+        db.commit()
+        db.refresh(user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Username or email already exists") from None
+    return user

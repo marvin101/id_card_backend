@@ -14,6 +14,7 @@ from app.models.card_template import CardTemplate
 from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
+from app.models.auth_session import AuthSession
 
 
 class _Result:
@@ -54,8 +55,13 @@ class _EndpointSession:
 
     def execute(self, statement):
         self.statements.append(statement)
+        if getattr(statement, "is_delete", False):
+            return _Result()
         entity = statement.column_descriptions[0].get("entity")
         params = set(statement.compile().params.values())
+
+        if entity is AuthSession:
+            return _Result(next((item for item in self.added if isinstance(item, AuthSession) and item.id in params), None))
 
         if entity is User:
             if self.user is None:

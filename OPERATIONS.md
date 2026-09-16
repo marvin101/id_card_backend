@@ -47,6 +47,8 @@ The names below come from `app/core/config.py` and `.env.example`. Required valu
 | `PUBLIC_FORM_MAX_REQUEST_BYTES` | Maximum anonymous public-form request size |
 | `PUBLIC_APP_URL` | Canonical Flutter origin placed in student-verification QR links |
 | `AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS` | Controlled reverse-proxy hops used to resolve client addresses |
+| `REFRESH_TOKEN_EXPIRE_MINUTES` | Absolute refresh/session lifetime in minutes; default 720 |
+| `REFRESH_RATE_LIMIT_REQUESTS` | Refresh/logout requests allowed per client and limiter window |
 
 Before deployment, confirm every required value is present, `SECRET_KEY` and `CREDENTIAL_SIGNING_KEY` are separate strong production-only values, the Vercel production origin is allowed by `CORS_ORIGINS`, and the trusted proxy-hop count matches Render's actual topology. Do not expose signing keys, `SUPABASE_SECRET_KEY`, or any database credential to Flutter Web.
 
@@ -59,7 +61,9 @@ Use liveness to determine whether the FastAPI process responds. Use readiness be
 
 ## Authentication and sessions
 
-CampusID uses bearer access tokens. Their lifetime is controlled by `ACCESS_TOKEN_EXPIRE_MINUTES`. There is no refresh-token infrastructure; after expiration, clients must clear the session and the user must authenticate again.
+CampusID uses short-lived bearer access tokens and durable, rotating workday sessions. `ACCESS_TOKEN_EXPIRE_MINUTES` controls the access token (30 minutes by default); `REFRESH_TOKEN_EXPIRE_MINUTES` controls the absolute session window (720 minutes by default). `POST /auth/refresh` accepts only a purpose-marked refresh token, rotates it, and returns current user authority in a new access token. A reused refresh token revokes that session. `POST /auth/logout` revokes the session. Inactive/deleted users, expired/revoked sessions, and refresh tokens presented to normal authenticated endpoints fail closed. Password resets and account deactivation revoke every durable session for that account.
+
+The Flutter client refreshes shortly before access expiry and retries one request after an expiry response. Concurrent calls share one refresh operation. A transient network failure keeps the local session and draft state for retry; an invalid, expired, or revoked refresh session clears both tokens. Treat `auth_sessions` as server-owned data: direct client access is denied by RLS. Migration `e8f5b21c0d93` must be applied before deploying code that creates sessions.
 
 Changing `SECRET_KEY` invalidates all login JWTs signed with the previous key. Plan that rotation as a forced sign-in event and verify authentication immediately afterward. Changing `CREDENTIAL_SIGNING_KEY` invalidates every signed credential already printed on a card; rotate it only through an explicit card-reissuance incident procedure. When the dedicated key is omitted, credentials fall back to `SECRET_KEY`, so a login-key rotation also invalidates them.
 

@@ -8,6 +8,13 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+### Added
+
+- Added rotating workday refresh sessions with durable hashed refresh credentials, absolute configurable expiry, replay revocation, explicit logout, inactive-user checks, and a deny-by-default RLS migration.
+- Added silent Flutter token renewal with single-flight concurrency, proactive refresh, one-request retry, transient-failure recovery, and draft-preserving session UX.
+- Added platform-administrator UI/API workflows for school creation and activation, account creation/editing/activation/password reset/platform role changes, and existing multi-school role assignments.
+- Added explicit school-logo removal and build-time organization/support/privacy/terms launch configuration, with `campusid@proton.me` as the approved default support address.
+
 ### Fixed
 
 - Reserved student activation changes and inactive-record editing for school administrators.
@@ -19,6 +26,8 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 ### Changed
 
 - Reduced backend import work with lazy Supabase Storage SDK/client initialization for more reliable Render startup.
+- Replaced the unbounded Flutter student-directory load with 100-record server paging, debounced search, and stale-response rejection.
+- Cached type-scoped custom-field definitions during student import validation to avoid repeated lookups.
 
 ## [0.10.0] - 2026-09-14
 

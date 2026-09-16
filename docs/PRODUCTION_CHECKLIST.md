@@ -6,12 +6,12 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] Back up PostgreSQL and verify the documented restore procedure and owner.
 - [ ] Confirm the database revision with `python -m alembic current` and the single target head with `python -m alembic heads`.
-- [ ] Review every pending migration through `d7e4a10b9c82`, including credential lifecycle data, personnel records and type-scoped custom fields, and run `python -m alembic upgrade head` as an explicit release step.
+- [ ] Review every pending migration through `e8f5b21c0d93`, including durable auth sessions, credential lifecycle data, personnel records and type-scoped custom fields, and run `python -m alembic upgrade head` as an explicit release step.
 - [ ] Configure every variable listed in `.env.example`; use separate strong production-only `SECRET_KEY` and `CREDENTIAL_SIGNING_KEY` values and the exact approved frontend origins in `CORS_ORIGINS`.
 - [ ] Set `PUBLIC_APP_URL` to the canonical Vercel production origin and confirm `PUBLIC_VERIFICATION_GET_RATE_LIMIT_REQUESTS` is reviewed.
 - [ ] Confirm Render's trusted proxy-hop count and that login, registration, public-form, public-design, and public-verification rate limiting remain enabled or have reviewed edge equivalents.
 - [ ] Confirm the Supabase Storage bucket policy, backup implications, and cleanup procedure for student/personnel photos and temporary bulk-import objects.
-- [ ] Replace or explicitly approve every Flutter launch placeholder, including the support address.
+- [ ] Confirm the approved `campusid@proton.me` support address and replace the remaining privacy/terms launch placeholders with approved text.
 - [ ] Run backend tests and compilation, Flutter tests and analysis, and both repositories' `git diff --check`.
 - [ ] Build Flutter Web with the approved API origin and copy `vercel.json` into `build/web` before deploying that directory.
 
@@ -19,7 +19,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 - [ ] `GET /health` returns `200` without authentication.
 - [ ] `GET /health/check` returns `200`; a controlled database outage returns generic `503` without internal details.
-- [ ] `python -m alembic current` reports `d7e4a10b9c82` after migration.
+- [ ] `python -m alembic current` reports `e8f5b21c0d93` after the authorized migration.
 - [ ] Direct Supabase Data API access to application tables remains denied by RLS, including `bulk_photo_imports`.
 - [ ] Expected `400`, `401`, `403`, `404`, `409`, `413`, `422`, and `429` responses contain useful safe messages; an induced server failure returns generic `500`/`502` without provider or SQL details.
 
@@ -44,7 +44,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Disable one student's link and confirm generic `404`; re-enable it, regenerate the link, confirm the old QR fails, and reprint the card with the new link.
 - [ ] Disable school-wide verification and confirm every student link becomes unavailable without changing the saved tokens.
 - [ ] Confirm an anonymous verification request has no bearer header, a non-admin cannot manage disclosure/link settings, and sensitive fields cannot be selected.
-- [ ] Let a token expire, refresh a protected route, and verify local auth/school state clears without a redirect loop. Log in again, then log out and confirm protected history is inaccessible.
+- [ ] Let an access token expire and verify silent refresh preserves the active screen and draft. Then revoke/expire the refresh session, verify clean sign-out without a redirect loop, log in again, log out, and confirm protected history is inaccessible.
 
 ## Hosting and rollback
 
@@ -56,4 +56,12 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 
 ## 1.0 readiness audit
 
-The [2026-09-16 readiness audit](READINESS_AUDIT_2026-09-16.md) records local fixes, incomplete school/user lifecycle workflows, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with Alembic head d7e4a10b9c82. Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.
+The [2026-09-16 readiness audit](READINESS_AUDIT_2026-09-16.md) records local fixes, completed local school/user lifecycle workflows and remaining deployment/staging gates, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with local Alembic head e8f5b21c0d93 (production remains d7e4a10b9c82 until an authorized migration). Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.
+
+## Workday sessions and launch content
+
+- [ ] Confirm refresh-token rotation, replay revocation, explicit logout, inactive-user rejection and current role/school authority against the migrated production schema.
+- [ ] Keep `ACCESS_TOKEN_EXPIRE_MINUTES` near 30 and set the approved absolute `REFRESH_TOKEN_EXPIRE_MINUTES` workday window (default 720).
+- [ ] Build Flutter with the approved CampusID organization and `campusid@proton.me` support values, plus approved `PRIVACY_NOTICE` and `TERMS_NOTICE` text.
+- [ ] Exercise platform school/account administration and multi-school assignment in disposable staging before production use.
+- [ ] Verify the deployed Render start command includes `--no-access-log`; the observed production command has not yet been changed by this local work.

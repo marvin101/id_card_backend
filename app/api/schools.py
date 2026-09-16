@@ -24,7 +24,7 @@ from app.core.school_access import (
 from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
-from app.schemas.school import SchoolCreate, SchoolResponse, SchoolUpdate
+from app.schemas.school import SchoolCreate, SchoolResponse, SchoolUpdate, SchoolActivation
 
 
 logger = logging.getLogger(__name__)
@@ -92,15 +92,18 @@ def create_school(
     response_model=list[SchoolResponse],
 )
 def list_my_schools(
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if include_inactive:
+        require_platform_admin(current_user)
     # Platform admins can see all active schools.
     if is_platform_admin(current_user):
         result = db.execute(
             select(School)
             .where(
-                School.is_active.is_(True),
+                School.is_active.is_(True) if not include_inactive else True,
             )
             .order_by(School.school_name)
         )
@@ -232,4 +235,34 @@ async def upload_school_logo(
                 exc_info=True,
             )
 
+    return _school_response(school)
+
+
+@router.patch("/{school_uuid}/activation", response_model=SchoolResponse)
+def set_school_activation(school_uuid: UUID, data: SchoolActivation,
+                          db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    require_platform_admin(current_user)
+    school = db.execute(select(School).where(School.uuid == school_uuid).with_for_update()).scalar_one_or_none()
+    if school is None:
+        raise HTTPException(404, "School not found")
+    school.is_active = data.is_active
+    db.commit()
+    db.refresh(school)
+    return _school_response(school)
+
+
+@router.delete("/{school_uuid}/logo", response_model=SchoolResponse)
+def remove_school_logo(school_uuid: UUID, db: Session = Depends(get_db),
+                       current_user: User = Depends(get_current_user)):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(db, current_user, school.id, "Only an administrator can remove the school logo")
+    old_path = school.logo_path
+    school.logo_path = None
+    db.commit()
+    db.refresh(school)
+    if old_path and old_path.startswith(f"schools/{school.uuid}/logos/"):
+        try:
+            delete_storage_object(old_path)
+        except StorageError:
+            logger.warning("School logo detached; previous object cleanup failed")
     return _school_response(school)

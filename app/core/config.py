@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = Field(default=30, ge=1)
 
+    refresh_token_expire_minutes: int = Field(default=12 * 60, ge=60)
+
     # Supabase
     supabase_url: str
     supabase_secret_key: str
@@ -32,6 +34,7 @@ class Settings(BaseSettings):
     auth_rate_limit_enabled: bool = True
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1)
     login_rate_limit_requests: int = Field(default=10, ge=1)
+    refresh_rate_limit_requests: int = Field(default=60, ge=1)
     registration_rate_limit_requests: int = Field(default=5, ge=1)
     public_form_get_rate_limit_requests: int = Field(default=60, ge=1)
     public_form_submit_rate_limit_requests: int = Field(default=10, ge=1)

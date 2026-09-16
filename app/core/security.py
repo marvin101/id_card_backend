@@ -40,6 +40,7 @@ def verify_password(password: str, hashed_password: str) -> bool:
 def create_access_token(
     subject: str,
     expires_delta: timedelta | None = None,
+    session_id: UUID | None = None,
 ) -> str:
     """Create a JWT access token."""
 
@@ -53,6 +54,9 @@ def create_access_token(
         "exp": expire,
         "typ": "access",
     }
+
+    if session_id is not None:
+        payload["sid"] = str(session_id)
 
     return jwt.encode(
         payload,
@@ -128,4 +132,7 @@ def get_current_user(
             detail="User account is inactive",
         )
 
+    if payload.get("sid") is not None:
+        from app.core.auth_sessions import require_live_session
+        require_live_session(db, payload, user)
     return user

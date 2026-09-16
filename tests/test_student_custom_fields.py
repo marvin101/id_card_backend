@@ -251,3 +251,19 @@ def test_student_response_loader_covers_every_serialized_relationship():
         and "StudentCustomFieldValue.field_definition" in path
         for path in paths
     )
+
+
+@pytest.mark.parametrize("school_id,entity_type", [(20, "student"), (10, "teacher")])
+def test_cached_student_definitions_preserve_school_and_type_boundaries(school_id, entity_type):
+    definition = _definition(school_id=school_id)
+    definition.entity_type = entity_type
+    with pytest.raises(HTTPException) as raised:
+        validate_student_custom_fields(_Database(), 10, [StudentCustomFieldInput(field_uuid=definition.uuid, value="safe")], require_all=True, definitions=[definition])
+    assert raised.value.status_code == 422
+
+
+def test_cached_student_definitions_validate_required_values_without_row_queries():
+    definition = _definition(required=True)
+    assert validate_student_custom_fields(_Database(), 10, [StudentCustomFieldInput(field_uuid=definition.uuid, value=" value ")], require_all=True, definitions=[definition]) == [(definition, "value")]
+    with pytest.raises(HTTPException):
+        validate_student_custom_fields(_Database(), 10, [], require_all=True, definitions=[definition])

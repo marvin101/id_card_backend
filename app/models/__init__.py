@@ -1,3 +1,4 @@
+from app.models.auth_session import AuthSession
 from app.models.academic_session import AcademicSession
 from app.models.card_template import CardTemplate
 from app.models.custom_field import (
@@ -19,6 +20,7 @@ from app.models.bulk_photo_import import BulkPhotoImport
 from app.models.public_form import PublicForm
 
 __all__ = [
+    "AuthSession",
     "AcademicSession",
     "CardTemplate",
     "CustomFieldDefinition",

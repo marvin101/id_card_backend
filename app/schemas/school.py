@@ -28,6 +28,11 @@ class SchoolCreate(BaseModel):
 
     principal_name: str | None = None
 
+    @field_validator("school_code", "school_name", mode="before")
+    @classmethod
+    def normalize_identity(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
 
 class SchoolUpdate(BaseModel):
     school_name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -107,4 +112,8 @@ class SchoolResponse(BaseModel):
     logo_url: str | None = None
     principal_name: str | None
 
+    is_active: bool
+
+
+class SchoolActivation(BaseModel):
     is_active: bool

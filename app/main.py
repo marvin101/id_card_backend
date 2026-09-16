@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -52,6 +53,22 @@ api = FastAPI(
     version=__version__,
     exception_handlers={500: _internal_server_error_response},
 )
+
+@api.exception_handler(RequestValidationError)
+async def safe_validation_error(request: Request, exc: RequestValidationError):
+    # Validation errors must never echo password/refresh-token input values.
+    errors = [{"loc": error["loc"], "msg": error["msg"], "type": error["type"]} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
+@api.middleware("http")
+async def private_response_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/auth/", "/users", "/public/forms/", "/public/designs/", "/public/verifications/")):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = BASE_DIR / "uploads"

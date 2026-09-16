@@ -144,7 +144,8 @@ def _validate_import(
     payload: StudentImportMapping,
 ) -> tuple[StudentImportPreviewResponse, list[_ValidatedImportRow]]:
     headers = set(manifest["headers"])
-    fields = _resolve_target_fields(db, school_id)
+    definitions = _active_custom_fields(db, school_id)
+    fields = _target_fields(definitions)
     valid_targets = {field.key for field in fields}
     mapping = {item.target_field: item.source_column for item in payload.mappings}
     unknown_sources = [source for source in mapping.values() if source not in headers]
@@ -247,7 +248,7 @@ def _validate_import(
                     address=values.get("address") or None,
                     custom_fields=custom_inputs,
                 )
-                validated_custom = validate_student_custom_fields(db, school_id, custom_inputs, require_all=True)
+                validated_custom = validate_student_custom_fields(db, school_id, custom_inputs, require_all=True, definitions=definitions)
             except (ValidationError, HTTPException) as exc:
                 if isinstance(exc, ValidationError):
                     errors.extend(error["msg"] for error in exc.errors())

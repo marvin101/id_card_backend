@@ -355,4 +355,16 @@ Flutter client: `https://github.com/marvin101/idcard_flutter`
 
 ## 1.0 readiness audit
 
-The [2026-09-16 readiness audit](docs/READINESS_AUDIT_2026-09-16.md) records local fixes, incomplete school/user lifecycle workflows, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with Alembic head d7e4a10b9c82. Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.
+The [2026-09-16 readiness audit](docs/READINESS_AUDIT_2026-09-16.md) records local fixes, completed local school/user lifecycle workflows and remaining deployment/staging gates, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with local Alembic head e8f5b21c0d93 (production remains d7e4a10b9c82 until an authorized migration). Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.
+
+## Workday sessions and platform administration
+
+The 30-minute access-token default remains a security boundary, but it no longer ends an active workday. Login now returns a purpose-separated rotating refresh token backed by a server-side `auth_sessions` row. The default absolute session window is 720 minutes and is configurable with `REFRESH_TOKEN_EXPIRE_MINUTES`. Use `POST /auth/refresh` to rotate credentials and `POST /auth/logout` to revoke the session. Reuse of a rotated refresh token revokes that session; inactive/deleted accounts and expired or revoked sessions cannot refresh. Password changes and deactivation revoke all sessions for the account.
+
+Flutter refreshes before access-token expiry, coalesces concurrent refreshes, retries an authenticated request once, and preserves the current route and unsaved form state. Invalid session credentials clear both tokens and return the user to sign-in. Transient network failures retain the local session for retry.
+
+Platform administrators can create, search, edit, activate and deactivate schools and accounts from **Platform Administration**. School profile editing retains its existing scoped authorization, now including explicit logo removal. School deletion remains intentionally unsupported. Account changes protect the current administrator and the last active platform administrator. Existing school assignment endpoints and UI handle role and multi-school membership changes.
+
+The student directory loads server pages of at most 100 records, uses debounced server search, and rejects stale responses. Build-time launch values use `ORGANIZATION_NAME`, `SUPPORT_EMAIL`, `PRIVACY_NOTICE`, and `TERMS_NOTICE`; the support address is configured as `campusid@proton.me`; approved privacy and terms text are still required before a release candidate.
+
+Migration `e8f5b21c0d93` creates the durable session table and deny-by-default RLS policy. Apply it before deploying this backend code. Production remains at `d7e4a10b9c82` until a separately authorized migration.

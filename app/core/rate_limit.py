@@ -180,3 +180,7 @@ def enforce_public_verification_rate_limit(request: Request) -> None:
             detail="Too many requests. Please try again later.",
             headers={"Retry-After": str(decision.retry_after)},
         )
+
+
+def enforce_refresh_rate_limit(request: Request) -> None:
+    _enforce(request, bucket="refresh", limit=settings.refresh_rate_limit_requests)

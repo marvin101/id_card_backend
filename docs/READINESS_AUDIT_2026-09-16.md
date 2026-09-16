@@ -132,3 +132,55 @@ Backend `git status --short` (pytest-cache directory warning is an environment l
 ```
 
 The sole new script is `scripts/readiness_readonly_smoke.py`. Flutter `git status --short` is empty. README/release/production checklists link this report and the unresolved staging gates; OPERATIONS startup guidance and CHANGELOG document local fixes. No code was deleted; no Flutter source changed.
+
+## P1 gap-closure addendum — 2026-09-16
+
+This addendum supersedes the earlier “not fixed” status for school lifecycle, account lifecycle, and the disruptive 30-minute session. Versions remain backend **0.10.0** and Flutter **0.10.0+10**. The local repository now has one Alembic head, **e8f5b21c0d93**; production was read-only and remains on **d7e4a10b9c82**.
+
+### Closed locally
+
+1. **Workday session interruption.** Access tokens remain 30 minutes by default. Login now creates a hashed, server-owned rotating refresh session with a configurable 720-minute absolute lifetime. Refresh and logout have separate rate limiting. Access and refresh token purposes are enforced; rotation replay revokes the session. Missing/inactive users, expired/revoked sessions, account deactivation and password resets fail closed. Validation responses omit submitted token/password input.
+2. **Flutter renewal and draft safety.** The HTTP wrapper renews one minute before expiry, shares one in-flight refresh across concurrent requests, retries the original request once after a successful refresh, and supports multipart replay. A transient network error retains credentials/drafts for retry; invalid refresh state clears auth. Tests exercise five concurrent requests, proactive renewal, one retry, transient failure, and a real unsaved student form.
+3. **School lifecycle.** Platform administrators can create/list active and inactive/edit/activate/deactivate schools in the UI. Existing scoped profile fields and logo upload remain, and explicit logo removal was added. Hard deletion is intentionally unavailable.
+4. **User lifecycle.** Platform administrators can search/create/edit/activate/deactivate accounts, reset passwords, and promote/demote platform administrators. Existing school-scoped assignment endpoints/UI add, change and remove roles across multiple schools. Self-deactivation/self-role changes and removal of the last active platform administrator return conflict responses. Deactivation/password reset revokes sessions.
+5. **Student list loading.** The Flutter directory now requests bounded 100-row pages, debounces server search, and discards stale responses.
+6. **Import lookups.** Student custom-field definitions are loaded once per school/type validation batch. Personnel already used batch definitions; the earlier suggestion that it had the same N+1 issue was incorrect.
+7. **Launch configuration.** Organization name defaults to CampusID. Support email, privacy notice and terms are build-time settings. `campusid@proton.me` is now the configured support address; approved privacy and terms text remain open.
+
+### Authorization matrix recheck
+
+| Role | Effective scope after local changes |
+|---|---|
+| Platform Admin | Global school and account lifecycle; all school-scoped administration after selecting a school |
+| School Admin | Assigned-school profile/logo, academic structure, ordinary school role assignments, identity CRUD/lifecycle/history, imports/Grid, templates/cards/printing and Public Forms |
+| Card Operator | Assigned-school identity data, imports/Grid, cards/PDF/Print Basket, and explicit mark-printed actions; cannot activate/deactivate identities, verify/correct them, or access administrator-only history/settings |
+| Teacher / Staff | Read-only supporting access to assigned-school academic structure under the existing policy; no global/school/account lifecycle authority |
+| Anonymous | Token-scoped public form, public design, and public verification routes only; no bearer authority |
+
+The earlier audit grouped mark-printed with administrator-only verification/history. That was too broad: established policy permits Card Operators to mark printed while retaining administrator-only activation, verification/correction and audit-history controls. The inactive-school Public Form guard and administrator-only student activation fix remain covered.
+
+### Evidence and limits
+
+Local backend tests cover login, refresh purpose separation, rotation/replay, logout, invalid/expired/missing/inactive cases, live role/school changes, school activation, account safeguards, password revocation, and token-safe error/log behavior. Existing disposable route tests cover Student, Teacher and Staff create/edit → correction → verification → print/reprint → audit behavior, custom fields, Grid permissions, and school isolation. Flutter tests cover Platform Administration, bounded student paging/search and renewal without losing an unsaved student form.
+
+The 18/18 production-safe probes passed and are recorded in `docs/p1-closure-readonly-smoke-results.json`: health/readiness/OpenAPI/CORS and Flutter route fallbacks responded as expected. This did not prove authenticated rendering or workflows. The smoke probes themselves were read-only. A later explicitly approved cleanup removed the reviewed production test data and media while retaining `testadmin`; no production migration was applied.
+
+### Open P1 gates
+
+1. Apply `e8f5b21c0d93` in an authorized release window before deploying session-enabled backend code, then run authenticated multi-role staging smoke.
+2. Supply approved privacy and terms content. CampusID and `campusid@proton.me` are configured as the organization and support address.
+3. Run real disposable staging UI/media journeys: Student/Teacher/Staff upload/replace/delete, school logo, bulk temporary upload/promotion/cleanup, browser refresh/back-forward, and multi-role sessions. Production storage cleanup removed the reviewed objects, but upload/replace/delete lifecycle behavior was not exercised.
+4. Change and verify the actual Render start command includes `--no-access-log`; documentation is aligned, but deployment was prohibited.
+5. Document/test first-platform-admin bootstrap and recovery as an exceptional operator procedure. Normal ongoing administration no longer needs Swagger or direct SQL.
+
+### Deferred P2/P3
+
+P2: archived personnel restoration/history UX, audit-history paging, legacy unbounded API compatibility endpoints, cross-tab refresh coordination, PDF/import peak-memory profiling, and a provider backup/restore drill. P3: remove only proven dead legacy platform directories/helpers in a separate cleanup. Deferred Photo Studio, collaboration/review, personnel credentials, white-label/lanyards and AI OCR remain outside this phase.
+
+### Release decision
+
+There is still no confirmed P0. The local implementation is a strong **0.10.x patch candidate**, but it is not ready to call **1.0.0-rc1** until the open P1 deployment, launch-content, access-log and disposable staging/media gates are completed.
+
+### Approved production cleanup result
+
+After explicit approval, production cleanup preserved only the active Platform Admin `testadmin` (`0cc576f8-0d30-4b82-b624-2f803551f93f`). It deleted 12 other users, 55 students, 4 classes, 3 schools, the reviewed dependent rows, and all 9 approved Storage objects. Postconditions verified that the reviewed application tables are empty, only `testadmin` remains, and all 9 objects are unavailable. Post-cleanup `/health` and `/health/check` both returned `ok`. No production migration or deployment occurred. See `docs/production-cleanup-result-20260916.json`.

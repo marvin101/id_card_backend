@@ -1,5 +1,5 @@
 from uuid import UUID
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 from typing import Literal
 
 SchoolRole = Literal["school_admin", "card_operator", "teacher", "staff"]
@@ -28,6 +28,9 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    refresh_expires_in: int | None = None
 
 class SchoolAccessResponse(BaseModel):
     user_uuid: UUID
@@ -77,3 +80,69 @@ class UserCreate(BaseModel):
         if self.school_uuid is None and self.school_name is None:
             raise ValueError("Select a school.")
         return self
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1, max_length=4096)
+
+
+class AdminUserCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+    username: str = Field(min_length=3, max_length=100, pattern=r"^\S+$")
+    password: str = Field(min_length=8, max_length=200)
+    full_name: str = Field(min_length=1, max_length=150)
+    email: str | None = Field(default=None, max_length=150)
+    mobile: str | None = Field(default=None, max_length=20)
+    designation: str | None = Field(default=None, max_length=100)
+
+    @field_validator("full_name", "email", "mobile", "designation", mode="before")
+    @classmethod
+    def normalize_contact(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        if value:
+            local, separator, domain = value.rpartition("@")
+            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
+                raise ValueError("Enter a valid email address")
+        return value
+
+
+class AdminUserUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+    full_name: str | None = Field(default=None, min_length=1, max_length=150)
+    email: str | None = Field(default=None, max_length=150)
+    mobile: str | None = Field(default=None, max_length=20)
+    designation: str | None = Field(default=None, max_length=100)
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+    platform_role: Literal["platform_admin"] | None = None
+
+    @model_validator(mode="after")
+    def validate_nonnullable(self):
+        for name in ("full_name", "is_active", "password"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
+        if self.full_name is not None and not self.full_name.strip():
+            raise ValueError("Full name cannot be empty")
+        return self
+
+    @field_validator("full_name", "email", "mobile", "designation", mode="before")
+    @classmethod
+    def normalize_contact(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        if value:
+            local, separator, domain = value.rpartition("@")
+            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
+                raise ValueError("Enter a valid email address")
+        return value
