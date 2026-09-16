@@ -157,7 +157,7 @@ Before launch, define and test a restricted, auditable provider-side procedure f
 Recommended Render start command (single worker):
 
 ```sh
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
+uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log
 ```
 
 Use `/health` as the Render liveness path. `/` intentionally returns 404;

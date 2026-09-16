@@ -53,3 +53,7 @@ Use this checklist for a staging deployment first, then repeat it for the produc
 - [ ] Confirm Render uses `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log`, the readiness check targets `/health/check`, and upstream logs do not retain public capability URLs without reviewed controls.
 - [ ] Record the last known-good backend/frontend artifacts and the database recovery decision point.
 - [ ] If rollback is needed, roll back application artifacts independently of the database; do not downgrade production data without a reviewed recovery plan.
+
+## 1.0 readiness audit
+
+The [2026-09-16 readiness audit](READINESS_AUDIT_2026-09-16.md) records local fixes, incomplete school/user lifecycle workflows, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with Alembic head d7e4a10b9c82. Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.

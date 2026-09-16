@@ -104,3 +104,7 @@ local Flutter release build
 - [ ] Treat database changes separately: do not assume code rollback reverses a migration, and do not run an irreversible downgrade casually.
 - [ ] Any database rollback or restore follows the actual recovery capability verified for the Supabase project/plan/configuration and the approved recovery runbook.
 - [ ] Confirm data integrity, Storage/photo behavior, authentication, and school authorization after recovery.
+
+## 1.0 readiness audit
+
+The [2026-09-16 readiness audit](docs/READINESS_AUDIT_2026-09-16.md) records local fixes, incomplete school/user lifecycle workflows, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with Alembic head d7e4a10b9c82. Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.

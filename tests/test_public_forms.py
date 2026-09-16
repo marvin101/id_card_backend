@@ -187,7 +187,7 @@ def _request():
 
 def _submission_form(*, allow_photo=False, require_all_fields=False):
     return SimpleNamespace(
-        id=1, school_id=10, is_active=True, expires_at=None,
+        id=1, school_id=10, is_active=True, expires_at=None, school=_school(),
         selected_system_fields=REQUIRED, selected_custom_field_uuids=[],
         require_all_fields=require_all_fields, allow_photo=allow_photo, success_message=None,
     )

@@ -1,0 +1,131 @@
+{
+  "checks": [
+    {
+      "path": "/health",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.486
+    },
+    {
+      "path": "/health/check",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.322
+    },
+    {
+      "path": "/openapi.json",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.409
+    },
+    {
+      "path": "/auth/login",
+      "method": "OPTIONS",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.249
+    },
+    {
+      "path": "/auth/login",
+      "method": "OPTIONS",
+      "status": 400,
+      "passed": true,
+      "seconds": 0.424
+    },
+    {
+      "path": "/users/me",
+      "method": "GET",
+      "status": 401,
+      "passed": true,
+      "seconds": 0.253
+    },
+    {
+      "path": "/public/forms/readiness-invalid-token",
+      "method": "GET",
+      "status": 404,
+      "passed": true,
+      "seconds": 0.41
+    },
+    {
+      "path": "/public/designs/readiness-invalid-token",
+      "method": "GET",
+      "status": 404,
+      "passed": true,
+      "seconds": 0.385
+    },
+    {
+      "path": "/public/verifications/readiness-invalid-token",
+      "method": "GET",
+      "status": 404,
+      "passed": true,
+      "seconds": 0.326
+    },
+    {
+      "path": "/",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.295
+    },
+    {
+      "path": "/dashboard",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.196
+    },
+    {
+      "path": "/design",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.221
+    },
+    {
+      "path": "/cards",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.24
+    },
+    {
+      "path": "/teachers",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.2
+    },
+    {
+      "path": "/staff",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.2
+    },
+    {
+      "path": "/public/forms/readiness-invalid-token",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.215
+    },
+    {
+      "path": "/public/designs/readiness-invalid-token",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.204
+    },
+    {
+      "path": "/verify/readiness-invalid-token",
+      "method": "GET",
+      "status": 200,
+      "passed": true,
+      "seconds": 0.225
+    }
+  ],
+  "passed": true
+}

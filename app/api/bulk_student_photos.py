@@ -159,10 +159,16 @@ def _student_lookup(
         )
     ).scalars().all()
 
-    return {
-        student.admission_no.strip().casefold(): student
-        for student in students
-    }
+    lookup: dict[str, Student] = {}
+    for student in students:
+        key = student.admission_no.strip().casefold()
+        if key in lookup:
+            raise HTTPException(
+                status_code=409,
+                detail="Ambiguous admission numbers exist in this school; correct them before importing photos.",
+            )
+        lookup[key] = student
+    return lookup
 
 
 def _mime_type_from_extension(

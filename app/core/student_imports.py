@@ -15,9 +15,11 @@ from fastapi import HTTPException, UploadFile, status
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_IMPORT_ROWS = 5000
+MAX_IMPORT_COLUMNS = 256
+MAX_IMPORT_CELLS = 500_000
 IMPORT_TTL_SECONDS = 24 * 60 * 60
 IMPORT_DIR = Path(tempfile.gettempdir()) / "campusid_student_imports"
-_CELL_REFERENCE = re.compile(r"([A-Z]+)")
+_CELL_REFERENCE = re.compile(r"([A-Z]{1,3})([1-9][0-9]{0,6})")
 
 
 def _cell_text(value: Any) -> str:
@@ -60,12 +62,14 @@ def _validate_table(
 
 
 def _column_index(reference: str) -> int:
-    match = _CELL_REFERENCE.match(reference)
-    if match is None:
-        return 0
+    match = _CELL_REFERENCE.fullmatch(reference)
+    if match is None or int(match.group(2)) > 1_048_576:
+        raise HTTPException(status_code=422, detail="Invalid XLSX cell reference")
     value = 0
     for char in match.group(1):
         value = value * 26 + ord(char) - 64
+    if value > MAX_IMPORT_COLUMNS:
+        raise HTTPException(status_code=413, detail="XLSX exceeds the 256 column limit")
     return value - 1
 
 
@@ -119,10 +123,16 @@ def _read_xlsx(content: bytes) -> tuple[list[Any], list[list[Any]]]:
             sheet_path = target if target.startswith("xl/") else f"xl/{target}"
             sheet = ElementTree.fromstring(archive.read(sheet_path))
             table = []
+            total_cells = 0
             for row_node in sheet.iter(f"{namespace}row"):
+                if len(table) >= MAX_IMPORT_ROWS + 1:
+                    raise HTTPException(status_code=413, detail="XLSX exceeds the 5000 row limit")
                 values: list[str] = []
                 for cell in row_node.findall(f"{namespace}c"):
                     index = _column_index(cell.attrib.get("r", "A1"))
+                    total_cells += max(0, index + 1 - len(values))
+                    if total_cells > MAX_IMPORT_CELLS:
+                        raise HTTPException(status_code=413, detail="XLSX exceeds the 500000 cell limit")
                     while len(values) <= index:
                         values.append("")
                     value_node = cell.find(f"{namespace}v")

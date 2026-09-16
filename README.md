@@ -352,3 +352,7 @@ The current release is `0.10.0`: `0.9.0` added production printing, supported ba
 ## Related client
 
 Flutter client: `https://github.com/marvin101/idcard_flutter`
+
+## 1.0 readiness audit
+
+The [2026-09-16 readiness audit](docs/READINESS_AUDIT_2026-09-16.md) records local fixes, incomplete school/user lifecycle workflows, and a repeatable disposable staging smoke plan. Versions remain 0.10.0 / 0.10.0+10 with Alembic head d7e4a10b9c82. Full multi-role UI, real Supabase media, and backup/restore evidence remain release gates; read-only production probes do not complete those gates.

@@ -8,6 +8,14 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ## [Unreleased]
 
+### Fixed
+
+- Reserved student activation changes and inactive-record editing for school administrators.
+- Rejected public form submissions for inactive schools.
+- Bounded sparse XLSX columns, rows, and materialized cells before allocation.
+- Rejected ambiguous case-insensitive admission numbers during bulk student photo matching.
+- Aligned Render startup guidance with capability-token access-log suppression.
+
 ### Changed
 
 - Reduced backend import work with lazy Supabase Storage SDK/client initialization for more reliable Render startup.

@@ -73,6 +73,8 @@ def _active_form(db: Session, token: str) -> PublicForm:
     ).scalar_one_or_none()
     if form is None or not form.is_active or (form.expires_at is not None and form.expires_at <= datetime.now(timezone.utc)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public form not found")
+    if not form.school.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Public form not found")
     return form
 
 
@@ -207,8 +209,6 @@ def get_public_form(token: str, request: Request, db: Session = Depends(get_db))
     enforce_public_form_rate_limit(request, submission=False)
     form = _active_form(db, token)
     school = form.school
-    if not school.is_active:
-        raise HTTPException(status_code=404, detail="Public form not found")
     return PublicFormView(
         school_name=school.school_name,
         school_logo_url=get_storage_public_url(school.logo_path),

@@ -1089,6 +1089,14 @@ def update_student(
         "Only a school administrator or card operator can update students",
     )
 
+    if "is_active" in student_data.model_fields_set:
+        require_school_admin(
+            db, current_user, school.id,
+            "Only a school administrator can change student activation",
+        )
+        if student_data.is_active is None:
+            raise HTTPException(status_code=422, detail="is_active cannot be null")
+
     # ------------------------------------------------------
     # Find student
     # ------------------------------------------------------
@@ -1104,6 +1112,12 @@ def update_student(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Student not found",
+        )
+
+    if not student.is_active:
+        require_school_admin(
+            db, current_user, school.id,
+            "Only a school administrator can update inactive students",
         )
 
     fields_set = student_data.model_fields_set
