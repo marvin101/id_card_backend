@@ -365,6 +365,7 @@ def delete_section(
         select(Student.id)
         .where(
             Student.section_id == section.id,
+            Student.is_active == True,
         )
         .limit(1)
     ).scalar_one_or_none()

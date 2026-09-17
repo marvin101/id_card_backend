@@ -273,6 +273,7 @@ def delete_class(
         select(Student.id)
         .where(
             Student.class_id == school_class.id,
+            Student.is_active.is_(True),
         )
         .limit(1)
     ).scalar_one_or_none()
