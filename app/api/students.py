@@ -407,6 +407,78 @@ async def upload_student_photo(
 
 
 # ==========================================================
+# Remove Student Photo
+# ==========================================================
+
+@router.delete(
+    "/{student_uuid}/photo",
+    response_model=StudentResponse,
+)
+def remove_student_photo(
+    school_uuid: UUID,
+    student_uuid: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+
+    require_card_data_access(
+        db,
+        current_user,
+        school.id,
+        "Only a school administrator or card operator can remove student photos",
+    )
+
+    student = _active_student(db, school.id, student_uuid)
+
+    previous_photo_path = student.photo_path
+
+    if previous_photo_path is None:
+        return student
+
+    previous_storage_path = managed_student_photo_storage_path(
+        previous_photo_path,
+        student.uuid,
+    )
+
+    student.photo_path = None
+
+    record_student_audit(
+        db,
+        student=student,
+        actor=current_user,
+        event_type="student_photo_removed",
+        field_name="photo_path",
+        old_value=previous_photo_path,
+        new_value=None,
+    )
+
+    try:
+        db.flush()
+
+        if previous_storage_path is not None:
+            delete_storage_object(previous_storage_path)
+
+        db.commit()
+
+    except StorageError as exc:
+        db.rollback()
+        logger.error("Student photo deletion failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to remove student photo.",
+        ) from exc
+
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(student)
+
+    return student
+
+
+# ==========================================================
 # List Students
 # ==========================================================
 

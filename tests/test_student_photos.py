@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import UploadFile
+from fastapi import HTTPException
 from PIL import Image
 
 from app.api import bulk_student_photos as bulk_api
@@ -28,6 +29,9 @@ class _StudentSession:
         self.events = events if events is not None else []
         self.rollbacks = 0
 
+    def flush(self):
+        self.events.append("flush")
+
     def execute(self, _statement):
         return _Result(self.student)
 
@@ -38,13 +42,13 @@ class _StudentSession:
     def commit(self):
         self.events.append("commit")
         if self.fail_commit:
-            self.fail_commit = False
             raise RuntimeError("database unavailable")
 
     def rollback(self):
         self.rollbacks += 1
+        self.events.append("rollback")
 
-    def refresh(self, _student):
+    def refresh(self, _value):
         self.events.append("refresh")
 
 
@@ -73,6 +77,7 @@ class _BulkSession:
         self.rollbacks += 1
 
     def delete(self, _value):
+        self.events.append("delete")
         return None
 
 
@@ -435,6 +440,101 @@ def test_manual_external_previous_url_is_not_deleted(monkeypatch):
     _upload_manually(student, session)
 
     assert deleted == []
+
+
+def test_remove_student_photo_deletes_managed_object_before_commit(monkeypatch):
+    _patch_manual_authorization(monkeypatch)
+    student = _student()
+    student.photo_path = _managed_url(student.uuid)
+    events = []
+    session = _StudentSession(student, events=events)
+    monkeypatch.setattr(
+        students_api,
+        "delete_storage_object",
+        lambda path: events.append(f"delete:{path}"),
+    )
+
+    result = students_api.remove_student_photo(
+        school_uuid=uuid4(),
+        student_uuid=student.uuid,
+        db=session,
+        current_user=SimpleNamespace(id=1),
+    )
+
+    expected_path = f"students/{student.uuid}/photo_old.png"
+    assert result.photo_path is None
+    assert session.added[0].event_type == "student_photo_removed"
+    assert events == [
+        "flush",
+        f"delete:{expected_path}",
+        "commit",
+        "refresh",
+    ]
+
+
+def test_remove_student_photo_is_idempotent_when_no_photo(monkeypatch):
+    _patch_manual_authorization(monkeypatch)
+    student = _student()
+    session = _StudentSession(student)
+    deleted = []
+    monkeypatch.setattr(students_api, "delete_storage_object", deleted.append)
+
+    result = students_api.remove_student_photo(
+        school_uuid=uuid4(),
+        student_uuid=student.uuid,
+        db=session,
+        current_user=SimpleNamespace(id=1),
+    )
+
+    assert result is student
+    assert session.events == []
+    assert deleted == []
+
+def test_remove_student_photo_storage_failure_rolls_back(monkeypatch):
+    _patch_manual_authorization(monkeypatch)
+
+    student = _student()
+    original_photo_path = _managed_url(student.uuid)
+    student.photo_path = original_photo_path
+
+    events = []
+    session = _StudentSession(student, events=events)
+
+    def fail_delete(_path):
+        events.append("delete")
+        raise students_api.StorageError("storage unavailable")
+
+    monkeypatch.setattr(
+        students_api,
+        "delete_storage_object",
+        fail_delete,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        students_api.remove_student_photo(
+            school_uuid=uuid4(),
+            student_uuid=student.uuid,
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Failed to remove student photo."
+
+    assert "flush" in events
+    assert "delete" in events
+    assert "rollback" in events
+    assert "commit" not in events
+    def flush(self):
+        if self.events is not None:
+            self.events.append("flush")
+
+    def rollback(self):
+        if self.events is not None:
+            self.events.append("rollback")
+    def commit(self):
+        if self.events is not None:
+            self.events.append("commit")
 
 
 def test_bulk_replacement_commits_before_old_photo_cleanup(monkeypatch):
