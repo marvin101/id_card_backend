@@ -33,8 +33,9 @@ an explicit `null` removes it.
 Every element has `id`, `type`, `x`, `y`, `width`, `height`, `rotation`,
 `z_index`, `locked`, `visible`, `style`, and `data`. Supported types are
 `text`, `bound_text`, `custom_field_text`, `student_photo`, `school_logo`,
-`rectangle`, `line`, `qr_code`, and `barcode`. System bindings use `data.field`; custom
-bindings use the stable `data.field_uuid` rather than a mutable label.
+`principal_signature`, `rectangle`, `rounded_rectangle`, `ellipse`, `circle`,
+`triangle`, `blood_drop`, `line`, `qr_code`, and `barcode`. System bindings use
+`data.field`; custom bindings use the stable `data.field_uuid` rather than a mutable label.
 
 Element IDs cannot contain surrounding whitespace and must be unique. Layering
 is explicit: every `z_index` must be an integer from `-10000` through `10000`
@@ -45,11 +46,21 @@ and must be unique within the document. Known properties are scoped by type:
 | `text` | `text` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
 | `bound_text` | supported `field` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
 | `custom_field_text` | canonical `field_uuid` | `color`, `font_size`, `font_weight`, `max_lines`, `alignment` |
-| `student_photo`, `school_logo` | none | `fit`, `border_color`, `border_width`, `corner_radius` |
-| `rectangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
+| `student_photo`, `school_logo`, `principal_signature` | none | `fit`, `border_color`, `border_width`, `corner_radius`, `image_shape` |
+| `rectangle`, `rounded_rectangle`, `ellipse`, `circle`, `triangle` | none | `fill_color`, `border_color`, `border_width`, `corner_radius` |
+| `blood_drop` | `field: blood_group`; optional `fallback` | `fill_color`, `border_color`, `border_width`, `corner_radius` |
 | `line` | none | `color`, `border_width` |
 | `qr_code` | exactly one of `text`, supported `field`, canonical `field_uuid`, or `fields` | `color`, `background_color`, `quiet_zone`, `error_correction` |
 | `barcode` | `symbology` plus exactly one of `text`, supported `field`, canonical `field_uuid`, or `fields` | `color`, `background_color`, `quiet_zone`, `show_text`, `font_size` |
+
+`principal_signature` uses the School Profile image automatically; its `data`
+object has no recognized fields. Image `fit` is `cover` or `contain`, and
+`image_shape` is `rectangle`, `rounded`, or `oval`. The public design
+preview includes the school's principal signature URL when configured.
+`blood_drop` resolves `blood_group` for the selected student or personnel
+record, using its optional `fallback` when empty. Other new shapes have no
+recognized data fields. Their border, fill, and radius values use the same
+bounds as `rectangle`.
 
 QR elements are square and at least 12 mm on each side. `prefix`, `suffix`,
 `fallback`, and `label` are optional data properties. Foreground and background

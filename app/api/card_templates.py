@@ -177,6 +177,7 @@ def get_public_design(
             postal_code=school.postal_code,
             principal_name=school.principal_name,
             logo_url=get_storage_public_url(school.logo_path),
+            principal_signature_url=get_storage_public_url(school.principal_signature_path),
         ),
     )
 

@@ -603,3 +603,69 @@ def test_photo_image_shape_rejects_unknown_value():
     document["elements"].append(element)
     with pytest.raises(ValidationError, match="image_shape"):
         CardTemplateUpdate(name="Shape card", design=document)
+
+
+NEW_DESIGNER_ELEMENTS = {
+    "principal_signature": (
+        {"fit": "contain", "border_color": "#242C61", "border_width": 0.5,
+         "corner_radius": 1.0, "image_shape": "rounded"},
+        {},
+    ),
+    "blood_drop": (
+        {"fill_color": "#C62828", "border_color": "#C62828",
+         "border_width": 0.5, "corner_radius": 0.0},
+        {"field": "blood_group", "fallback": "BG"},
+    ),
+    **{
+        kind: (
+            {"fill_color": "#E8EEF8", "border_color": "#242C61",
+             "border_width": 0.5,
+             "corner_radius": 3.0 if kind == "rounded_rectangle" else 0.0},
+            {},
+        )
+        for kind in ("rounded_rectangle", "ellipse", "circle", "triangle")
+    },
+}
+
+
+@pytest.mark.parametrize("element_type", NEW_DESIGNER_ELEMENTS)
+def test_new_designer_elements_round_trip_on_both_sides(element_type):
+    style, data = NEW_DESIGNER_ELEMENTS[element_type]
+    front = _document()
+    element = deepcopy(front["elements"][0])
+    element.update(
+        id=element_type, type=element_type, z_index=4, width=20.0,
+        height=20.0 if element_type in {"circle", "blood_drop"} else 16.0,
+        style=style, data=data,
+    )
+    front["elements"].append(element)
+    back = deepcopy(front)
+    payload = CardTemplateUpdate(
+        name="New elements", design=front, back_design=back,
+    )
+    assert payload.design["elements"][-1] == element
+    assert payload.back_design["elements"][-1] == element
+
+
+@pytest.mark.parametrize(
+    ("element_type", "style", "data", "message"),
+    [
+        ("principal_signature", {}, {"field": "principal_name"}, "data.field is unsupported"),
+        ("principal_signature", {"fit": "stretch"}, {}, "style.fit is unsupported"),
+        ("principal_signature", {"image_shape": "triangle"}, {}, "style.image_shape is unsupported"),
+        ("blood_drop", {}, {}, "data.field must be blood_group"),
+        ("blood_drop", {}, {"field": "full_name"}, "data.field must be blood_group"),
+        ("blood_drop", {}, {"field": "blood_group", "fallback": 42}, "data.fallback must be a string"),
+        ("blood_drop", {}, {"field": "blood_group", "text": "O+"}, "data.text is unsupported"),
+        ("blood_drop", {"fit": "contain"}, {"field": "blood_group"}, "style.fit is unsupported"),
+        ("rounded_rectangle", {"font_size": 3}, {}, "style.font_size is unsupported"),
+        ("ellipse", {}, {"field": "blood_group"}, "data.field is unsupported"),
+        ("circle", {"image_shape": "oval"}, {}, "style.image_shape is unsupported"),
+        ("triangle", {"border_width": -1}, {}, "style.border_width must be at least"),
+    ],
+)
+def test_new_designer_elements_reject_malformed_contract(element_type, style, data, message):
+    document = _document()
+    document["elements"][0].update(type=element_type, style=style, data=data)
+    with pytest.raises(ValidationError, match=message):
+        CardTemplateUpdate(name="Invalid", design=document)

@@ -111,6 +111,13 @@ The card-template endpoint stores one template per school. The database uniquene
 
 ### Validation
 
+For schema v2, the accepted Designer element types include `principal_signature`,
+`blood_drop`, `rounded_rectangle`, `ellipse`, `circle`, and `triangle`.
+The signature resolves from School Profile without element data; the blood drop
+requires `data.field: blood_group` and may specify a fallback. The new shapes
+use the existing fill, border, width, and radius style contract. The public
+design preview includes the configured principal signature URL.
+
 For schema v2, request validation enforces explicit version handling; canvas dimensions and orientation consistency; a maximum of 250 elements; unique, nonblank element IDs; supported element types; finite geometry; and the documented coordinate, size, rotation, and z-index ranges. It also validates hex colours; known style, data, and settings fields; canonical custom-field UUID strings; and the accepted student, academic, school, and principal bindings. Template names are trimmed before the 1–120 character limit is applied.
 
 The principal numeric limits are: canvas width/height greater than 10 mm and at most 2000 mm; element `x`/`y` from 0 to 2000; positive width/height at most 2000; rotation from -360 to 360 degrees; and integer z-index with absolute value at most 10000. Element bounds may extend beyond the canvas so the client's Keep positions strategy can preserve geometry.

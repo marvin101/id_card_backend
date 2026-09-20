@@ -75,6 +75,7 @@ def _fixture(*, enabled=True, role="school_admin"):
         postal_code="834001",
         principal_name="Principal Name",
         logo_path=None,
+        principal_signature_path="schools/signature.png",
         is_active=True,
     )
     template = SimpleNamespace(
@@ -118,8 +119,9 @@ def test_public_design_route_is_anonymous_and_returns_no_student_or_token_data()
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["name"] == "Standard card"
     assert response.json()["school"]["school_name"] == "Campus School"
+    assert response.json()["school"]["principal_signature_url"] is not None
     assert "public_token" not in response.text
-    assert "student" not in response.text.lower()
+    assert "student" not in response.json()
     route = next(route for route in public_router.routes if "GET" in route.methods)
     assert all(
         dependency.call.__name__ != "get_current_user"

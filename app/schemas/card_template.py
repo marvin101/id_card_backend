@@ -13,7 +13,13 @@ SUPPORTED_ELEMENT_TYPES = {
     "custom_field_text",
     "student_photo",
     "school_logo",
+    "principal_signature",
+    "blood_drop",
     "rectangle",
+    "rounded_rectangle",
+    "ellipse",
+    "circle",
+    "triangle",
     "line",
     "qr_code",
     "barcode",
@@ -92,6 +98,12 @@ _STYLE_KEYS_BY_TYPE = {
     },
     "student_photo": {"fit", "border_color", "border_width", "corner_radius", "image_shape"},
     "school_logo": {"fit", "border_color", "border_width", "corner_radius", "image_shape"},
+    "principal_signature": {"fit", "border_color", "border_width", "corner_radius", "image_shape"},
+    "rounded_rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
+    "ellipse": {"fill_color", "border_color", "border_width", "corner_radius"},
+    "circle": {"fill_color", "border_color", "border_width", "corner_radius"},
+    "triangle": {"fill_color", "border_color", "border_width", "corner_radius"},
+    "blood_drop": {"fill_color", "border_color", "border_width", "corner_radius"},
     "rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
     "line": {"color", "border_width"},
     "qr_code": {"color", "background_color", "quiet_zone", "error_correction"},
@@ -116,6 +128,12 @@ _DATA_KEYS_BY_TYPE = {
     },
     "student_photo": set(),
     "school_logo": set(),
+    "principal_signature": set(),
+    "rounded_rectangle": set(),
+    "ellipse": set(),
+    "circle": set(),
+    "triangle": set(),
+    "blood_drop": {"field", "fallback"},
     "rectangle": set(),
     "line": set(),
     "qr_code": {
@@ -383,6 +401,8 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError(
                     f"{prefix}.data.field_uuid must be a canonical UUID"
                 )
+        if element_type == "blood_drop" and data.get("field") != "blood_group":
+            raise ValueError(f"{prefix}.data.field must be blood_group for blood_drop")
         if element_type in {"qr_code", "barcode"}:
             kind = "QR" if element_type == "qr_code" else "barcode"
             if element_type == "barcode":
@@ -669,6 +689,7 @@ class PublicDesignSchool(BaseModel):
     postal_code: str | None
     principal_name: str | None
     logo_url: str | None
+    principal_signature_url: str | None = None
 
 
 class PublicDesignView(BaseModel):

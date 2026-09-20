@@ -600,3 +600,70 @@ def test_card_template_validation_failure_leaves_previous_record_unchanged():
     assert template.name == "Original"
     assert template.design is original_design
     assert session.commits == 0
+
+
+def test_card_template_put_accepts_all_new_flutter_element_types():
+    current_user = _user()
+    school = SimpleNamespace(id=10, uuid=uuid4(), is_active=True)
+    access = SimpleNamespace(
+        user_id=current_user.id, school_id=school.id, role="school_admin"
+    )
+    template = SimpleNamespace(
+        uuid=uuid4(), school_id=school.id, name="Original",
+        design={"version": 1}, back_design=None,
+        updated_at=datetime.now(timezone.utc),
+    )
+    session = _EndpointSession(
+        user=current_user, school=school, access=access, template=template
+    )
+    _override_db(session)
+    app.dependency_overrides[get_current_user] = lambda: current_user
+    types = (
+        "principal_signature", "blood_drop", "rounded_rectangle",
+        "ellipse", "circle", "triangle",
+    )
+    elements = []
+    for index, element_type in enumerate(types):
+        is_signature = element_type == "principal_signature"
+        is_blood_drop = element_type == "blood_drop"
+        elements.append({
+            "id": f"new-{index}", "type": element_type,
+            "x": 2.0 + index * 12, "y": 5.0, "width": 10.0, "height": 12.0,
+            "rotation": 0.0, "z_index": index, "locked": False, "visible": True,
+            "style": (
+                {"fit": "contain", "border_color": "#242C61",
+                 "border_width": 0.5, "corner_radius": 1.0,
+                 "image_shape": "rounded"} if is_signature else
+                {"fill_color": "#C62828", "border_color": "#242C61",
+                 "border_width": 0.5,
+                 "corner_radius": 3.0 if element_type == "rounded_rectangle" else 0.0}
+            ),
+            "data": {"field": "blood_group", "fallback": "BG"} if is_blood_drop else {},
+        })
+    design = {
+        "schema_version": 2,
+        "canvas": {"width": 85.6, "height": 53.98,
+                   "orientation": "landscape", "background_color": "#FFFFFF"},
+        "elements": elements, "settings": {},
+    }
+    with TestClient(app) as client:
+        response = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={"name": "New elements", "design": design, "back_design": design},
+        )
+    assert response.status_code == 200, response.text
+    assert [item["type"] for item in response.json()["design"]["elements"]] == list(types)
+    assert response.json()["back_design"] == design
+    assert session.commits == 1
+
+    malformed = {**design, "elements": [dict(element) for element in elements]}
+    malformed["elements"][1]["data"] = {"field": "full_name"}
+    with TestClient(app) as client:
+        rejected = client.put(
+            f"/schools/{school.uuid}/card-template",
+            json={"name": "Rejected blood drop", "design": malformed},
+        )
+    assert rejected.status_code == 422
+    assert "data.field must be blood_group" in rejected.text
+    assert template.design == design
+    assert session.commits == 1
