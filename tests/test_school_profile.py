@@ -73,6 +73,7 @@ def _school(**overrides):
         "postal_code": None,
         "logo_path": None,
         "principal_name": None,
+        "principal_signature_path": None,
         "is_active": True,
     }
     values.update(overrides)
@@ -297,3 +298,44 @@ def test_database_failure_cleans_up_new_logo_and_keeps_old_object(monkeypatch):
     assert deleted == [new_path]
     assert session.rollbacks == 1
     assert old_path not in deleted
+
+
+def test_principal_signature_upload_replaces_managed_object(monkeypatch):
+    school = _school()
+    old_path = f"schools/{school.uuid}/signatures/old.png"
+    new_path = f"schools/{school.uuid}/signatures/new.png"
+    school.principal_signature_path = old_path
+    session = _ProfileSession(school)
+    _configure(session, _user(platform=True))
+    deleted = []
+    monkeypatch.setattr(schools_api, "save_principal_signature", lambda *args: new_path)
+    monkeypatch.setattr(schools_api, "delete_storage_object", deleted.append)
+    monkeypatch.setattr(schools_api, "get_storage_public_url", lambda path: f"https://media.test/{path}" if path else None)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/schools/{school.uuid}/principal-signature",
+            files={"signature": ("signature.png", _png_bytes(), "image/png")},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["principal_signature_path"] == new_path
+    assert response.json()["principal_signature_url"] == f"https://media.test/{new_path}"
+    assert deleted == [old_path]
+
+
+def test_principal_signature_storage_failure_keeps_existing_path(monkeypatch):
+    school = _school(principal_signature_path="schools/existing/signatures/old.png")
+    session = _ProfileSession(school)
+    _configure(session, _user(platform=True))
+    monkeypatch.setattr(schools_api, "save_principal_signature", lambda *args: (_ for _ in ()).throw(StorageError("offline")))
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/schools/{school.uuid}/principal-signature",
+            files={"signature": ("signature.png", _png_bytes(), "image/png")},
+        )
+
+    assert response.status_code == 502
+    assert school.principal_signature_path == "schools/existing/signatures/old.png"
+    assert session.commits == 0

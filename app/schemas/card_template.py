@@ -63,6 +63,7 @@ _KNOWN_STYLE_KEYS = {
     "border_color",
     "border_width",
     "corner_radius",
+    "image_shape",
     "font_size",
     "font_weight",
     "max_lines",
@@ -89,8 +90,8 @@ _STYLE_KEYS_BY_TYPE = {
         "max_lines",
         "alignment",
     },
-    "student_photo": {"fit", "border_color", "border_width", "corner_radius"},
-    "school_logo": {"fit", "border_color", "border_width", "corner_radius"},
+    "student_photo": {"fit", "border_color", "border_width", "corner_radius", "image_shape"},
+    "school_logo": {"fit", "border_color", "border_width", "corner_radius", "image_shape"},
     "rectangle": {"fill_color", "border_color", "border_width", "corner_radius"},
     "line": {"color", "border_width"},
     "qr_code": {"color", "background_color", "quiet_zone", "error_correction"},
@@ -315,6 +316,8 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
                 )
         if style.get("alignment") not in {None, "left", "center", "right"}:
             raise ValueError(f"{prefix}.style.alignment is unsupported")
+        if style.get("image_shape") not in {None, "rectangle", "rounded", "oval"}:
+            raise ValueError(f"{prefix}.style.image_shape is unsupported")
         if style.get("fit") not in {None, "cover", "contain"}:
             raise ValueError(f"{prefix}.style.fit is unsupported")
         if element_type in {"qr_code", "barcode"}:

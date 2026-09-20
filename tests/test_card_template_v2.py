@@ -586,3 +586,20 @@ def test_name_is_trimmed_before_length_validation():
 def test_non_string_name_is_a_validation_error():
     with pytest.raises(ValidationError):
         CardTemplateUpdate(name=42, design=_document())
+
+@pytest.mark.parametrize("shape", ["rectangle", "rounded", "oval"])
+def test_photo_image_shape_round_trips(shape):
+    document = _document()
+    element = deepcopy(document["elements"][0])
+    element.update(id="photo-shape", type="student_photo", z_index=4, data={}, style={"image_shape": shape})
+    document["elements"].append(element)
+    assert CardTemplateUpdate(name="Shape card", design=document).design["elements"][-1]["style"]["image_shape"] == shape
+
+
+def test_photo_image_shape_rejects_unknown_value():
+    document = _document()
+    element = deepcopy(document["elements"][0])
+    element.update(id="photo-shape", type="student_photo", z_index=4, data={}, style={"image_shape": "triangle"})
+    document["elements"].append(element)
+    with pytest.raises(ValidationError, match="image_shape"):
+        CardTemplateUpdate(name="Shape card", design=document)

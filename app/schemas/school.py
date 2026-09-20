@@ -111,6 +111,8 @@ class SchoolResponse(BaseModel):
     logo_path: str | None
     logo_url: str | None = None
     principal_name: str | None
+    principal_signature_path: str | None = None
+    principal_signature_url: str | None = None
 
     is_active: bool
 

@@ -127,6 +127,8 @@ class School(Base):
         nullable=True,
     )
 
+    principal_signature_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     principal_name: Mapped[str | None] = mapped_column(
         String(150),
         nullable=True,

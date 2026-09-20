@@ -211,7 +211,7 @@ def test_non_admin_cannot_manage_public_design_link():
     assert response.status_code == 403
 
 
-def test_public_design_migration_is_revocable_and_rls_hardening_is_head():
+def test_public_design_migration_is_revocable_and_rls_hardening_is_in_history():
     root = Path(__file__).parents[1]
     migration = (
         root
@@ -235,4 +235,4 @@ def test_public_design_migration_is_revocable_and_rls_hardening_is_head():
 
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["e8f5b21c0d93"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["a2b1c3d4e5f6"]

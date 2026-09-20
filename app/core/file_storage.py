@@ -388,6 +388,27 @@ def save_school_logo(
     return storage_path
 
 
+
+def save_principal_signature(
+    school_uuid: UUID, content: bytes, content_type: str | None, filename: str | None,
+) -> str:
+    try:
+        extension = validate_school_logo(content, content_type, filename)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("School logo", "Principal signature")
+                         .replace("school logo", "principal signature")
+                         .replace("logo", "signature")) from exc
+    storage_path = f"schools/{school_uuid}/signatures/{uuid4().hex}{extension}"
+    try:
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
+            path=storage_path, file=content,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+    except Exception as exc:
+        raise StorageError(f"Failed to upload principal signature: {exc}") from exc
+    return storage_path
+
+
 def get_storage_public_url(storage_path: str | None) -> str | None:
     if not storage_path:
         return None

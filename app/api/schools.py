@@ -12,6 +12,7 @@ from app.core.file_storage import (
     delete_storage_object,
     get_storage_public_url,
     save_school_logo,
+    save_principal_signature,
 )
 from app.core.security import get_current_user
 from app.core.school_access import (
@@ -39,7 +40,8 @@ router = APIRouter(
 def _school_response(school: School) -> SchoolResponse:
     response = SchoolResponse.model_validate(school)
     return response.model_copy(
-        update={"logo_url": get_storage_public_url(school.logo_path)}
+        update={"logo_url": get_storage_public_url(school.logo_path),
+                "principal_signature_url": get_storage_public_url(school.principal_signature_path)}
     )
 
 
@@ -235,6 +237,59 @@ async def upload_school_logo(
                 exc_info=True,
             )
 
+    return _school_response(school)
+
+
+
+@router.post("/{school_uuid}/principal-signature", response_model=SchoolResponse)
+async def upload_principal_signature(
+    school_uuid: UUID, signature: UploadFile = File(...),
+    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(db, current_user, school.id, "Only an administrator can update the principal signature")
+    content = await signature.read(MAX_SCHOOL_LOGO_SIZE + 1)
+    old_path = school.principal_signature_path
+    try:
+        new_path = save_principal_signature(school.uuid, content, signature.content_type, signature.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except StorageError as exc:
+        raise HTTPException(status_code=502, detail="Signature storage is currently unavailable.") from exc
+    school.principal_signature_path = new_path
+    try:
+        db.commit()
+        db.refresh(school)
+    except Exception:
+        db.rollback()
+        try:
+            delete_storage_object(new_path)
+        except StorageError:
+            logger.warning("Could not clean up newly uploaded signature", exc_info=True)
+        raise
+    if old_path and old_path != new_path and old_path.startswith(f"schools/{school.uuid}/signatures/"):
+        try:
+            delete_storage_object(old_path)
+        except StorageError:
+            logger.warning("Could not remove replaced signature", exc_info=True)
+    return _school_response(school)
+
+
+@router.delete("/{school_uuid}/principal-signature", response_model=SchoolResponse)
+def remove_principal_signature(
+    school_uuid: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(db, current_user, school.id, "Only an administrator can remove the principal signature")
+    old_path = school.principal_signature_path
+    school.principal_signature_path = None
+    db.commit()
+    db.refresh(school)
+    if old_path and old_path.startswith(f"schools/{school.uuid}/signatures/"):
+        try:
+            delete_storage_object(old_path)
+        except StorageError:
+            logger.warning("Signature detached; object cleanup failed", exc_info=True)
     return _school_response(school)
 
 
