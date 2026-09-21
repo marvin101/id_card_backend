@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.custom_field import StudentFieldDefinitionResponse
+from app.schemas.student_field_config import BuiltinStudentFieldResponse
 
 
 class StudentGridLookupItem(BaseModel):
@@ -41,6 +42,7 @@ class StudentGridResponse(BaseModel):
     limit: int
     has_more: bool
     custom_fields: list[StudentFieldDefinitionResponse]
+    system_fields: list[BuiltinStudentFieldResponse]
     sessions: list[StudentGridLookupItem]
     classes: list[StudentGridLookupItem]
     sections: list[StudentGridLookupItem]

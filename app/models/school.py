@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.personnel import Personnel
     from app.models.school_class import SchoolClass
     from app.models.student import Student
+    from app.models.student_field_config import SchoolStudentFieldConfig
     from app.models.user_school_access import UserSchoolAccess
 
 
@@ -205,6 +206,11 @@ class School(Base):
     )
 
     custom_field_definitions: Mapped[list["CustomFieldDefinition"]] = relationship(
+        back_populates="school",
+        cascade="all, delete-orphan",
+    )
+
+    student_field_configs: Mapped[list["SchoolStudentFieldConfig"]] = relationship(
         back_populates="school",
         cascade="all, delete-orphan",
     )

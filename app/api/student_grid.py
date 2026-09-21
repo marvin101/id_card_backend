@@ -15,6 +15,7 @@ from app.core.database import get_db
 from app.core.school_access import get_active_school, require_card_data_access
 from app.core.security import get_current_user
 from app.core.student_audit import custom_field_change_set, record_student_field_changes
+from app.core.student_field_config import effective_student_field_map, effective_student_fields
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition, StudentCustomFieldValue
 from app.models.school_class import SchoolClass
@@ -120,13 +121,19 @@ def _error_response(errors: list[dict[str, str]], *, conflict: bool = False):
     )
 
 
-def _clean_text(field: str, value: Any, student_uuid: UUID, errors: list[dict[str, str]]):
+def _clean_text(
+    field: str,
+    value: Any,
+    student_uuid: UUID,
+    errors: list[dict[str, str]],
+    required_fields: set[str] | frozenset[str] = REQUIRED_SYSTEM_FIELDS,
+):
     if value is not None and not isinstance(value, str):
         errors.append(_error(student_uuid, field, "Must be text"))
         return None
     cleaned = value.strip() if isinstance(value, str) else None
     if not cleaned:
-        if field in REQUIRED_SYSTEM_FIELDS:
+        if field in required_fields:
             errors.append(_error(student_uuid, field, "This field is required"))
         return None
     limit = TEXT_LIMITS.get(field)
@@ -199,6 +206,7 @@ def get_student_grid(
             CustomFieldDefinition.is_active.is_(True),
         ).order_by(CustomFieldDefinition.display_order, CustomFieldDefinition.id)
     ).scalars().all()
+    system_fields = effective_student_fields(db, school.id)
 
     session_by_uuid = {item.uuid: item for item in sessions}
     class_by_uuid = {item.uuid: item for item in classes}
@@ -237,6 +245,7 @@ def get_student_grid(
         limit=limit,
         has_more=offset + len(students) < total,
         custom_fields=custom_fields,
+        system_fields=system_fields,
         sessions=[StudentGridLookupItem(uuid=item.uuid, name=item.name) for item in sessions],
         classes=[StudentGridLookupItem(uuid=item.uuid, name=item.name) for item in classes],
         sections=[StudentGridLookupItem(uuid=item.uuid, name=item.name, class_uuid=class_uuid_by_id[item.class_id]) for item in sections],
@@ -284,6 +293,9 @@ def patch_student_grid(
     class_by_uuid = {item.uuid: item for item in classes}
     section_by_uuid = {item.uuid: item for item in sections}
     definition_by_uuid = {str(item.uuid): item for item in definitions}
+    field_config = effective_student_field_map(db, school.id)
+    enabled_system_fields = {key for key, item in field_config.items() if item.enabled}
+    required_system_fields = {key for key, item in field_config.items() if item.enabled and item.required}
 
     errors: list[dict[str, str]] = []
     conflicts: list[dict[str, str]] = []
@@ -295,6 +307,8 @@ def patch_student_grid(
             continue
         unknown = sorted(set(patch.system_fields) - EDITABLE_SYSTEM_FIELDS)
         errors.extend(_error(student.uuid, field, "Field is not editable in the grid") for field in unknown)
+        disabled = sorted(set(patch.system_fields) & (EDITABLE_SYSTEM_FIELDS - enabled_system_fields))
+        errors.extend(_error(student.uuid, field, "Built-in student field is disabled") for field in disabled)
 
         values = {
             "session_uuid": student.session_uuid,
@@ -314,19 +328,24 @@ def patch_student_grid(
             "address": student.address,
         }
         for field, raw in patch.system_fields.items():
-            if field not in EDITABLE_SYSTEM_FIELDS:
+            if field not in EDITABLE_SYSTEM_FIELDS or field not in enabled_system_fields:
                 continue
             if field in {"session_uuid", "class_uuid", "section_uuid"}:
                 values[field] = _parse_uuid(field, raw, student.uuid, errors)
             elif field == "dob":
                 values[field] = _parse_date(raw, student.uuid, errors)
             elif field == "blood_group":
-                cleaned = _clean_text(field, raw, student.uuid, errors)
+                cleaned = _clean_text(field, raw, student.uuid, errors, required_system_fields)
                 if cleaned is not None and cleaned not in {item.value for item in BloodGroup}:
                     errors.append(_error(student.uuid, field, "Select a valid blood group"))
                 values[field] = cleaned
             else:
-                values[field] = _clean_text(field, raw, student.uuid, errors)
+                values[field] = _clean_text(field, raw, student.uuid, errors, required_system_fields)
+
+        for field in required_system_fields:
+            value = values[field]
+            if value is None or (isinstance(value, str) and not value.strip()):
+                errors.append(_error(student.uuid, field, "This field is required"))
 
         session = session_by_uuid.get(values["session_uuid"])
         school_class = class_by_uuid.get(values["class_uuid"])

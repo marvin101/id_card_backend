@@ -5,16 +5,11 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.student import BloodGroup
+from app.core.student_field_config import BUILTIN_STUDENT_FIELDS, PROTECTED_STUDENT_FIELD_KEYS
 
 
-SYSTEM_FIELD_KEYS = (
-    "session_uuid", "class_uuid", "section_uuid", "admission_no", "roll_no",
-    "stream", "full_name", "father_name", "mother_name", "dob", "gender",
-    "blood_group", "mobile", "aadhaar", "address",
-)
-REQUIRED_SYSTEM_FIELD_KEYS = frozenset({
-    "session_uuid", "class_uuid", "section_uuid", "admission_no", "full_name"
-})
+SYSTEM_FIELD_KEYS = tuple(BUILTIN_STUDENT_FIELDS)
+REQUIRED_SYSTEM_FIELD_KEYS = PROTECTED_STUDENT_FIELD_KEYS
 
 
 class PublicFormConfigWrite(BaseModel):

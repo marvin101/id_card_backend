@@ -21,6 +21,7 @@ from app.core.student_import_template import (
     student_import_template_filename,
 )
 from app.core.student_audit import record_student_audit
+from app.core.student_field_config import effective_student_fields
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.school_class import SchoolClass
@@ -60,14 +61,36 @@ BUILT_IN_FIELDS = (
     StudentImportField(key="address", label="Address", data_type="multiline"),
 )
 
+IMPORT_KEY_BY_FIELD = {
+    "session_uuid": "academic_session",
+    "class_uuid": "class",
+    "section_uuid": "section",
+}
+
+
+def _configured_builtin_fields(db: Session, school_id: int) -> list[StudentImportField]:
+    return [
+        StudentImportField(
+            key=IMPORT_KEY_BY_FIELD.get(field.key, field.key),
+            label=field.label,
+            required=field.required,
+            data_type=field.data_type,
+        )
+        for field in effective_student_fields(db, school_id)
+        if field.enabled
+    ]
+
 
 def _normalized_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.casefold())
 
 
-def _target_fields(definitions: list[CustomFieldDefinition]) -> list[StudentImportField]:
+def _target_fields(
+    definitions: list[CustomFieldDefinition],
+    built_in_fields: tuple[StudentImportField, ...] | list[StudentImportField] = BUILT_IN_FIELDS,
+) -> list[StudentImportField]:
     return [
-        *BUILT_IN_FIELDS,
+        *built_in_fields,
         *[
             StudentImportField(
                 key=f"custom:{definition.uuid}",
@@ -113,7 +136,7 @@ def _active_custom_fields(db: Session, school_id: int) -> list[CustomFieldDefini
 
 def _resolve_target_fields(db: Session, school_id: int) -> list[StudentImportField]:
     """Return the ordered, currently importable schema for one school."""
-    return _target_fields(_active_custom_fields(db, school_id))
+    return _target_fields(_active_custom_fields(db, school_id), _configured_builtin_fields(db, school_id))
 
 
 def _unique_lookup(items: list[Any], label: str) -> dict[str, Any]:
@@ -145,7 +168,7 @@ def _validate_import(
 ) -> tuple[StudentImportPreviewResponse, list[_ValidatedImportRow]]:
     headers = set(manifest["headers"])
     definitions = _active_custom_fields(db, school_id)
-    fields = _target_fields(definitions)
+    fields = _target_fields(definitions, _configured_builtin_fields(db, school_id))
     valid_targets = {field.key for field in fields}
     mapping = {item.target_field: item.source_column for item in payload.mappings}
     unknown_sources = [source for source in mapping.values() if source not in headers]
@@ -194,10 +217,9 @@ def _validate_import(
             errors.append(f"Section not found in class: {values.get('section', '')}")
         admission_no = values.get("admission_no", "")
         full_name = values.get("full_name", "")
-        if not admission_no:
-            errors.append("Admission Number is required")
-        if not full_name:
-            errors.append("Full Name is required")
+        for field in fields:
+            if field.required and not field.key.startswith("custom:") and not values.get(field.key):
+                errors.append(f"{field.label} is required")
         row_is_duplicate = False
         if admission_no:
             if admission_no in seen_admissions:

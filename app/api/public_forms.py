@@ -25,6 +25,11 @@ from app.core.school_access import get_active_school, require_school_admin
 from app.core.security import get_current_user
 from app.core.public_credentials import initialize_public_credential
 from app.core.student_audit import record_student_audit
+from app.core.student_field_config import (
+    BUILTIN_STUDENT_FIELDS,
+    effective_student_field_map,
+    effective_student_fields,
+)
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.public_form import PublicForm
@@ -39,7 +44,6 @@ from app.schemas.public_form import (
     PublicFormView,
     PublicSubmissionResponse,
     PublicStudentInput,
-    REQUIRED_SYSTEM_FIELD_KEYS,
 )
 from app.schemas.student import StudentCustomFieldInput
 
@@ -48,23 +52,7 @@ logger = logging.getLogger(__name__)
 management_router = APIRouter(prefix="/schools/{school_uuid}/public-form", tags=["Public Forms"])
 public_router = APIRouter(prefix="/public/forms", tags=["Public Forms"])
 
-SYSTEM_FIELDS = {
-    "session_uuid": ("Academic session", "select"),
-    "class_uuid": ("Class", "select"),
-    "section_uuid": ("Section", "select"),
-    "admission_no": ("Admission number", "text"),
-    "roll_no": ("Roll number", "text"),
-    "stream": ("Stream", "text"),
-    "full_name": ("Full name", "text"),
-    "father_name": ("Father's name", "text"),
-    "mother_name": ("Mother's name", "text"),
-    "dob": ("Date of birth", "date"),
-    "gender": ("Gender", "text"),
-    "blood_group": ("Blood group", "text"),
-    "mobile": ("Mobile", "phone"),
-    "aadhaar": ("Aadhaar", "text"),
-    "address": ("Address", "multiline"),
-}
+SYSTEM_FIELDS = {key: (field.label, field.data_type) for key, field in BUILTIN_STUDENT_FIELDS.items()}
 
 
 def _active_form(db: Session, token: str) -> PublicForm:
@@ -118,6 +106,10 @@ def save_public_form_config(
     current_user: User = Depends(get_current_user),
 ):
     school = _manager(db, school_uuid, current_user)
+    config = effective_student_field_map(db, school.id)
+    disabled = sorted(key for key in payload.selected_system_fields if not config[key].enabled)
+    if disabled:
+        raise HTTPException(status_code=422, detail=f"Built-in student field is disabled: {disabled[0]}")
     selected_custom = _validate_custom_selection(db, school.id, payload.selected_custom_field_uuids)
     form = db.execute(select(PublicForm).where(PublicForm.school_id == school.id)).scalar_one_or_none()
     values = payload.model_dump(exclude={"selected_custom_field_uuids"})
@@ -170,16 +162,21 @@ def _public_fields(db: Session, form: PublicForm) -> list[PublicField]:
             for item in sections if item.class_id in class_uuid_by_id
         ],
     }
+    selected_system = set(form.selected_system_fields)
+    effective_system = [
+        field for field in effective_student_fields(db, form.school_id)
+        if field.enabled and (field.key in selected_system or field.required)
+    ]
     fields = [
         PublicField(
-            key=key,
-            label=SYSTEM_FIELDS[key][0],
-            data_type=SYSTEM_FIELDS[key][1],
-            required=key in REQUIRED_SYSTEM_FIELD_KEYS or form.require_all_fields,
+            key=field.key,
+            label=field.label,
+            data_type=field.data_type,
+            required=field.required or form.require_all_fields,
             kind="system",
-            options=option_map.get(key),
+            options=option_map.get(field.key),
         )
-        for key in form.selected_system_fields if key in SYSTEM_FIELDS
+        for field in effective_system
     ]
     selected = [UUID(value) for value in form.selected_custom_field_uuids]
     definitions = db.execute(
@@ -250,13 +247,20 @@ async def submit_public_form(
     if form.require_all_fields and form.allow_photo and photo is None:
         raise HTTPException(status_code=422, detail="Photo is required")
 
-    selected_system = set(form.selected_system_fields)
+    field_config = effective_student_field_map(db, form.school_id)
+    selected_system = {
+        key for key in form.selected_system_fields
+        if key in field_config and field_config[key].enabled
+    }
+    selected_system.update(
+        key for key, field in field_config.items() if field.enabled and field.required
+    )
     supplied_system = payload.model_fields_set - {"custom_fields"}
     unexpected = supplied_system - selected_system
     if unexpected:
         raise HTTPException(status_code=422, detail=f"Field is not enabled for this form: {sorted(unexpected)[0]}")
     for key in selected_system:
-        if key in REQUIRED_SYSTEM_FIELD_KEYS or form.require_all_fields:
+        if field_config[key].required or form.require_all_fields:
             _required(getattr(payload, key), SYSTEM_FIELDS[key][0])
 
     supplied_custom = {item.field_uuid for item in payload.custom_fields}

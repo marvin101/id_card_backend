@@ -34,6 +34,11 @@ from app.core.student_audit import (
     record_student_audit,
     record_student_field_changes,
 )
+from app.core.student_field_config import (
+    effective_student_field_map,
+    reject_disabled_student_fields,
+    validate_required_student_fields,
+)
 from app.core.school_access import (
     get_active_school,
     require_card_data_access,
@@ -130,6 +135,10 @@ async def create_student(
         school.id,
         "Only a school administrator or card operator can create students",
     )
+
+    field_config = effective_student_field_map(db, school.id)
+    reject_disabled_student_fields(field_config, student_data.model_fields_set)
+    validate_required_student_fields(field_config, student_data.model_dump())
 
     validated_custom_fields = validate_student_custom_fields(
         db,
@@ -1193,6 +1202,8 @@ def update_student(
         )
 
     fields_set = student_data.model_fields_set
+    field_config = effective_student_field_map(db, school.id)
+    reject_disabled_student_fields(field_config, fields_set)
     tracked_fields = {
         "admission_no", "roll_no", "stream", "full_name", "father_name",
         "mother_name", "dob", "gender", "blood_group", "mobile", "aadhaar",
@@ -1303,6 +1314,18 @@ def update_student(
             )
 
         target_section_id = section.id
+
+    final_builtin_values = {
+        "session_uuid": student_data.session_uuid if "session_uuid" in fields_set else student.session_uuid,
+        "class_uuid": student_data.class_uuid if "class_uuid" in fields_set else student.class_uuid,
+        "section_uuid": student_data.section_uuid if "section_uuid" in fields_set else student.section_uuid,
+        **{
+            key: getattr(student_data, key) if key in fields_set else getattr(student, key)
+            for key in field_config
+            if key not in {"session_uuid", "class_uuid", "section_uuid"}
+        },
+    }
+    validate_required_student_fields(field_config, final_builtin_values)
 
     # ------------------------------------------------------
     # Apply academic placement

@@ -26,6 +26,7 @@ from app.api.personnel_imports import router as personnel_imports_router
 from app.api.student_grid import router as student_grid_router
 from app.api.card_templates import public_router as public_designs_router, router as card_templates_router
 from app.api.student_fields import router as student_fields_router
+from app.api.student_field_config import router as student_field_config_router
 from app.api.student_imports import router as student_imports_router
 from app.api.bulk_student_photos import router as bulk_student_photos_router
 from app.api.bulk_personnel_photos import router as bulk_personnel_photos_router
@@ -94,6 +95,7 @@ api.include_router(personnel_fields_router)
 api.include_router(card_templates_router)
 api.include_router(public_designs_router)
 api.include_router(student_fields_router)
+api.include_router(student_field_config_router)
 api.include_router(student_imports_router)
 api.include_router(bulk_student_photos_router)
 api.include_router(bulk_personnel_photos_router)
