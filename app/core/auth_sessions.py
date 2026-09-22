@@ -94,6 +94,11 @@ def refresh_session(db, token):
     return result
 
 
-def revoke_user_sessions(db, user_id):
-    db.execute(update(AuthSession).where(AuthSession.user_id == user_id, AuthSession.revoked_at.is_(None))
-               .values(revoked_at=datetime.now(timezone.utc)))
+def revoke_user_sessions(db, user_id, *, except_session_id: UUID | None = None):
+    query = update(AuthSession).where(
+        AuthSession.user_id == user_id,
+        AuthSession.revoked_at.is_(None),
+    )
+    if except_session_id is not None:
+        query = query.where(AuthSession.id != except_session_id)
+    db.execute(query.values(revoked_at=datetime.now(timezone.utc)))

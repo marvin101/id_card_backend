@@ -110,6 +110,7 @@ class _EndpointSession:
 
 
 def _user(*, username="operator", active=True):
+    now = datetime.now(timezone.utc)
     return SimpleNamespace(
         id=1,
         uuid=uuid4(),
@@ -122,7 +123,10 @@ def _user(*, username="operator", active=True):
         platform_role=None,
         is_platform_admin=False,
         is_active=active,
+        profile_photo_path=None,
         last_login=None,
+        created_at=now,
+        updated_at=now,
     )
 
 

@@ -183,6 +183,58 @@ def save_personnel_photo(
     return str(get_supabase_client().storage.from_(SUPABASE_BUCKET).get_public_url(storage_path))
 
 
+def save_user_profile_photo(
+    user_uuid: UUID,
+    content: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> str:
+    try:
+        extension = validate_school_logo(content, content_type, filename)
+    except ValueError as exc:
+        raise ValueError(
+            str(exc)
+            .replace("School logo", "Profile photo")
+            .replace("school logo", "profile photo")
+            .replace("logo", "photo")
+        ) from exc
+
+    storage_path = f"users/{user_uuid}/avatars/{uuid4().hex}{extension}"
+    try:
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
+            path=storage_path,
+            file=content,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+    except Exception as exc:
+        raise StorageError("Failed to upload profile photo") from exc
+    return storage_path
+
+
+def managed_user_profile_photo_storage_path(
+    photo_path: str | None,
+    user_uuid: UUID | None = None,
+) -> str | None:
+    if not photo_path or not photo_path.strip():
+        return None
+    candidate = photo_path.strip()
+    if "://" in candidate or candidate.startswith("/") or "?" in candidate:
+        return None
+    parts = candidate.split("/")
+    if len(parts) != 4 or parts[0] != "users" or parts[2] != "avatars":
+        return None
+    try:
+        path_user_uuid = UUID(parts[1])
+        UUID(hex=Path(parts[3]).stem)
+    except ValueError:
+        return None
+    if user_uuid is not None and path_user_uuid != user_uuid:
+        return None
+    if Path(parts[3]).suffix.lower() not in ALLOWED_IMAGE_TYPES.values():
+        return None
+    return candidate
+
+
 def save_bulk_photo_temp(
     *,
     school_uuid: UUID,

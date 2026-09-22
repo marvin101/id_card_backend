@@ -68,6 +68,11 @@ class User(Base):
         nullable=True,
     )
 
+    profile_photo_path: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
     # ==========================================================
     # Platform Administration
     # ==========================================================

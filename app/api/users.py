@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+import logging
+
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -6,7 +10,21 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 from app.core.database import get_db
 from app.core.rate_limit import enforce_registration_rate_limit
-from app.core.security import get_current_user, hash_password
+from app.core.auth_sessions import revoke_user_sessions
+from app.core.file_storage import (
+    StorageError,
+    delete_storage_object,
+    get_storage_public_url,
+    managed_user_profile_photo_storage_path,
+    save_user_profile_photo,
+)
+from app.core.security import (
+    decode_access_token,
+    get_current_user,
+    hash_password,
+    security,
+    verify_password,
+)
 from app.core.school_access import (
     LEGACY_SCHOOL_ADMIN_ROLE,
     SCHOOL_ADMIN_ROLE,
@@ -26,12 +44,51 @@ from app.schemas.auth import  (
     SchoolUserAssignmentResponse,
     RegistrationSchoolResponse,
     UserCreate, 
-    UserResponse, AdminUserCreate, AdminUserUpdate
+    UserResponse, AdminUserCreate, AdminUserUpdate,
+    ChangePasswordRequest, SelfProfileResponse, SelfProfileSchool,
+    SelfProfileUpdate,
     )
+logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/users",
     tags=["Users"],
 )
+
+
+def _self_profile_response(db: Session, user: User) -> SelfProfileResponse:
+    school_contexts = db.execute(
+        select(UserSchoolAccess, School)
+        .join(School, School.id == UserSchoolAccess.school_id)
+        .where(UserSchoolAccess.user_id == user.id)
+        .order_by(School.school_name, School.uuid)
+    ).all()
+    photo_path = managed_user_profile_photo_storage_path(
+        user.profile_photo_path,
+        user.uuid,
+    )
+    return SelfProfileResponse(
+        uuid=user.uuid,
+        username=user.username,
+        full_name=user.full_name,
+        email=user.email,
+        mobile=user.mobile,
+        designation=user.designation,
+        platform_role=user.platform_role,
+        is_platform_admin=user.is_platform_admin,
+        is_active=user.is_active,
+        profile_photo_url=get_storage_public_url(photo_path),
+        last_login=user.last_login,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+        school_contexts=[
+            SelfProfileSchool(
+                school_uuid=school.uuid,
+                school_name=school.school_name,
+                role=access.role,
+            )
+            for access, school in school_contexts
+        ],
+    )
 
 
 def _resolve_registration_school(db: Session, user_data: UserCreate) -> School:
@@ -147,12 +204,123 @@ def register_user(
 
 @router.get(
     "/me",
-    response_model=UserResponse,
+    response_model=SelfProfileResponse,
 )
 def get_my_profile(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return current_user
+    return _self_profile_response(db, current_user)
+
+
+@router.patch("/me", response_model=SelfProfileResponse)
+def update_my_profile(
+    data: SelfProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    values = data.model_dump(exclude_unset=True)
+    for field, value in values.items():
+        setattr(current_user, field, value)
+    db.commit()
+    db.refresh(current_user)
+    return _self_profile_response(db, current_user)
+
+
+@router.post("/me/profile-photo", response_model=SelfProfileResponse)
+async def upload_my_profile_photo(
+    photo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    content = await photo.read()
+    old_path = managed_user_profile_photo_storage_path(
+        current_user.profile_photo_path,
+        current_user.uuid,
+    )
+    try:
+        new_path = save_user_profile_photo(
+            current_user.uuid,
+            content,
+            photo.content_type,
+            photo.filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except StorageError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Profile photo storage is temporarily unavailable.",
+        ) from exc
+
+    current_user.profile_photo_path = new_path
+    try:
+        db.commit()
+        db.refresh(current_user)
+    except Exception:
+        db.rollback()
+        try:
+            delete_storage_object(new_path)
+        except StorageError:
+            logger.warning("Could not clean up newly uploaded profile photo", exc_info=True)
+        raise
+
+    if old_path and old_path != new_path:
+        try:
+            delete_storage_object(old_path)
+        except StorageError:
+            logger.warning("Could not remove replaced profile photo", exc_info=True)
+    return _self_profile_response(db, current_user)
+
+
+@router.delete("/me/profile-photo", response_model=SelfProfileResponse)
+def remove_my_profile_photo(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    old_path = managed_user_profile_photo_storage_path(
+        current_user.profile_photo_path,
+        current_user.uuid,
+    )
+    current_user.profile_photo_path = None
+    db.commit()
+    db.refresh(current_user)
+    if old_path:
+        try:
+            delete_storage_object(old_path)
+        except StorageError:
+            logger.warning("Profile photo detached; object cleanup failed", exc_info=True)
+    return _self_profile_response(db, current_user)
+
+
+@router.post("/me/change-password", status_code=status.HTTP_204_NO_CONTENT)
+def change_my_password(
+    data: ChangePasswordRequest,
+    response: Response,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    ).scalar_one()
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    user.password_hash = hash_password(data.new_password)
+    session_id = None
+    payload = decode_access_token(credentials.credentials)
+    if payload.get("sid"):
+        try:
+            session_id = UUID(payload["sid"])
+        except (TypeError, ValueError, AttributeError):
+            session_id = None
+    revoke_user_sessions(db, user.id, except_session_id=session_id)
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
 
 
 # ==========================================================

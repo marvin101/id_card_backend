@@ -1,4 +1,6 @@
 from uuid import UUID
+from datetime import datetime
+
 from pydantic import BaseModel, Field, model_validator, field_validator
 from typing import Literal
 
@@ -18,6 +20,47 @@ class UserResponse(BaseModel):
     platform_role: str | None = None
     is_platform_admin: bool
     is_active: bool
+
+
+class SelfProfileSchool(BaseModel):
+    school_uuid: UUID
+    school_name: str
+    role: str
+
+
+class SelfProfileResponse(UserResponse):
+    profile_photo_url: str | None = None
+    last_login: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    school_contexts: list[SelfProfileSchool] = Field(default_factory=list)
+
+
+class SelfProfileUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=150)
+    mobile: str | None = Field(default=None, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_nonnullable_name(self):
+        if "full_name" in self.model_fields_set and self.full_name is None:
+            raise ValueError("full_name cannot be null")
+        return self
+
+    @field_validator("full_name", "mobile", mode="before")
+    @classmethod
+    def normalize_profile_fields(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+
+class ChangePasswordRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class LoginRequest(BaseModel):
