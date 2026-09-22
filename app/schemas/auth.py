@@ -39,20 +39,32 @@ class SelfProfileResponse(UserResponse):
 class SelfProfileUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
+    username: str | None = Field(default=None, min_length=3, max_length=100, pattern=r"^\S+$")
     full_name: str | None = Field(default=None, min_length=1, max_length=150)
+    email: str | None = Field(default=None, max_length=150)
     mobile: str | None = Field(default=None, max_length=20)
 
     @model_validator(mode="after")
     def validate_nonnullable_name(self):
-        if "full_name" in self.model_fields_set and self.full_name is None:
-            raise ValueError("full_name cannot be null")
+        for name in ("username", "full_name"):
+            if name in self.model_fields_set and getattr(self, name) is None:
+                raise ValueError(f"{name} cannot be null")
         return self
 
-    @field_validator("full_name", "mobile", mode="before")
+    @field_validator("username", "full_name", "email", "mobile", mode="before")
     @classmethod
     def normalize_profile_fields(cls, value):
         if isinstance(value, str):
             return value.strip() or None
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        if value:
+            local, separator, domain = value.rpartition("@")
+            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
+                raise ValueError("Enter a valid email address")
         return value
 
 
@@ -137,6 +149,7 @@ class AdminUserCreate(BaseModel):
     email: str | None = Field(default=None, max_length=150)
     mobile: str | None = Field(default=None, max_length=20)
     designation: str | None = Field(default=None, max_length=100)
+    platform_role: Literal["platform_admin"] | None = None
 
     @field_validator("full_name", "email", "mobile", "designation", mode="before")
     @classmethod

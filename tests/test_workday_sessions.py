@@ -130,8 +130,12 @@ def test_account_creation_edit_activation_password_and_self_protection(journey):
     url = f"/users/{user.uuid}/account"
     assert client.patch(url, json={"full_name": "Changed"}, headers=headers(tokens["access_token"])).status_code == 403
     assert client.patch(url, json={"full_name": "Changed", "mobile": "123"}, headers=h).status_code == 200
-    assert client.patch(f"/users/{admin.uuid}/account", json={"is_active": False}, headers=h).status_code == 409
-    assert client.patch(f"/users/{admin.uuid}/account", json={"platform_role": None}, headers=h).status_code == 409
+    deactivate_last = client.patch(f"/users/{admin.uuid}/account", json={"is_active": False}, headers=h)
+    assert deactivate_last.status_code == 409
+    assert deactivate_last.json()["detail"] == "The last active platform administrator must be retained"
+    demote_last = client.patch(f"/users/{admin.uuid}/account", json={"platform_role": None}, headers=h)
+    assert demote_last.status_code == 409
+    assert demote_last.json()["detail"] == "The last active platform administrator must be retained"
     assert client.patch(url, json={"is_active": False}, headers=h).status_code == 200
     assert client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
     assert client.patch(url, json={"is_active": True}, headers=h).status_code == 200
@@ -142,6 +146,37 @@ def test_account_creation_edit_activation_password_and_self_protection(journey):
     assert created.status_code == 201 and "password" not in created.text
     assert client.post("/users/accounts", json={"username": "other-user", "full_name": "Other", "password": "password123", "email": "NEW@example.test"}, headers=h).status_code == 409
     assert client.get("/users?search=new", headers=h).json()[0]["username"] == "new-user"
+
+
+def test_platform_admin_can_create_another_platform_admin(journey):
+    client, _, _, _, _ = journey
+    admin_headers = headers(login(client)["access_token"])
+    response = client.post(
+        "/users/accounts",
+        json={
+            "username": "second-admin",
+            "full_name": "Second Admin",
+            "password": "password123",
+            "platform_role": "platform_admin",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 201
+    assert response.json()["platform_role"] == "platform_admin"
+    assert response.json()["is_platform_admin"] is True
+    worker_headers = headers(login(client, "worker")["access_token"])
+    denied = client.post(
+        "/users/accounts",
+        json={
+            "username": "forbidden-admin",
+            "full_name": "Forbidden Admin",
+            "password": "password123",
+            "platform_role": "platform_admin",
+        },
+        headers=worker_headers,
+    )
+    assert denied.status_code == 403
 
 
 @pytest.mark.parametrize("data", [{"is_active": None}, {"full_name": None}, {"password": None}, {"platform_role": "teacher"}, {"full_name": "  "}, {"username": "hack"}])

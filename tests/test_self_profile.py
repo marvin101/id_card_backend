@@ -24,14 +24,21 @@ class _Result:
     def scalar_one_or_none(self):
         return self.value
 
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self.value
+
     def all(self):
         return self.rows
 
 
 class _ProfileSession:
-    def __init__(self, user, *, school_rows=()):
+    def __init__(self, user, *, school_rows=(), identity_match=None):
         self.user = user
         self.school_rows = list(school_rows)
+        self.identity_match = identity_match
         self.commits = 0
         self.rollbacks = 0
         self.statements = []
@@ -45,6 +52,9 @@ class _ProfileSession:
         if entity is UserSchoolAccess:
             return _Result(rows=self.school_rows)
         return _Result()
+
+    def scalar(self, _statement):
+        return self.identity_match
 
     def commit(self):
         self.commits += 1
@@ -123,22 +133,44 @@ def test_self_profile_rejects_unauthenticated_requests():
     assert response.status_code in {401, 403}
 
 
-def test_patch_updates_only_name_and_phone_and_preserves_other_user():
+def test_patch_updates_editable_profile_fields_and_preserves_other_user():
     user = _user()
     other_user = _user(id=2, username="other", full_name="Other User")
     session = _ProfileSession(user)
     with _client_for(user, session) as client:
         response = client.patch(
             "/users/me",
-            json={"full_name": "  Updated Name  ", "mobile": " +44 20 1234 5678 "},
+            json={
+                "username": "  updated-user  ",
+                "full_name": "  Updated Name  ",
+                "email": " updated@example.com ",
+                "mobile": " +44 20 1234 5678 ",
+            },
         )
 
     assert response.status_code == 200
+    assert response.json()["username"] == "updated-user"
     assert response.json()["full_name"] == "Updated Name"
+    assert response.json()["email"] == "updated@example.com"
     assert response.json()["mobile"] == "+44 20 1234 5678"
     assert user.full_name == "Updated Name"
     assert other_user.full_name == "Other User"
     assert session.commits == 1
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("username", "other-user"), ("email", "OTHER@example.com")],
+)
+def test_patch_rejects_duplicate_username_or_email(field, value):
+    user = _user()
+    other_user = _user(id=2, username="other-user", email="other@example.com")
+    session = _ProfileSession(user, identity_match=other_user)
+    with _client_for(user, session) as client:
+        response = client.patch("/users/me", json={field: value})
+
+    assert response.status_code == 409
+    assert session.commits == 0
 
 
 @pytest.mark.parametrize("field,value", [
@@ -147,7 +179,6 @@ def test_patch_updates_only_name_and_phone_and_preserves_other_user():
     ("is_active", False),
     ("school_uuid", str(uuid4())),
     ("permissions", ["all"]),
-    ("email", "attacker@example.com"),
 ])
 def test_patch_cannot_mutate_privileged_or_read_only_fields(field, value):
     user = _user()

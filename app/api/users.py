@@ -220,10 +220,20 @@ def update_my_profile(
     current_user: User = Depends(get_current_user),
 ):
     values = data.model_dump(exclude_unset=True)
+    _check_account_identity(
+        db,
+        username=values.get("username"),
+        email=values.get("email"),
+        exclude_id=current_user.id,
+    )
     for field, value in values.items():
         setattr(current_user, field, value)
-    db.commit()
-    db.refresh(current_user)
+    try:
+        db.commit()
+        db.refresh(current_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Username or email already exists") from None
     return _self_profile_response(db, current_user)
 
 
@@ -832,7 +842,7 @@ def _check_account_identity(db, username=None, email=None, exclude_id=None):
         query = select(User).where(or_(*conditions))
         if exclude_id is not None:
             query = query.where(User.id != exclude_id)
-        if db.execute(query).scalars().first() is not None:
+        if db.scalar(query) is not None:
             raise HTTPException(409, "Username or email already exists")
 
 
@@ -845,8 +855,12 @@ def create_account(data: AdminUserCreate, db: Session = Depends(get_db),
     values["full_name"] = values["full_name"].strip()
     if not values["full_name"]:
         raise HTTPException(422, "Full name cannot be empty")
-    user = User(**values, password_hash=hash_password(data.password), is_active=True,
-                is_platform_admin=False, platform_role=None)
+    user = User(
+        **values,
+        password_hash=hash_password(data.password),
+        is_active=True,
+        is_platform_admin=data.platform_role == "platform_admin",
+    )
     db.add(user)
     try:
         db.commit()
@@ -870,11 +884,11 @@ def update_account(user_uuid: UUID, data: AdminUserUpdate, db: Session = Depends
     if user is None:
         raise HTTPException(404, "User not found")
     values = data.model_dump(exclude_unset=True)
-    if current_user.id == user.id and (values.get("is_active") is False or "platform_role" in values):
-        raise HTTPException(409, "You cannot deactivate yourself or change your own platform role")
     loses_admin = values.get("is_active") is False or ("platform_role" in values and values["platform_role"] is None)
     if user.is_active and is_platform_admin(user) and loses_admin and len(admins) <= 1:
         raise HTTPException(409, "The last active platform administrator must be retained")
+    if current_user.id == user.id and (values.get("is_active") is False or "platform_role" in values):
+        raise HTTPException(409, "You cannot deactivate yourself or change your own platform role")
     _check_account_identity(db, email=values.get("email"), exclude_id=user.id)
     if "password" in values:
         user.password_hash = hash_password(values.pop("password"))
