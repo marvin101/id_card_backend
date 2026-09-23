@@ -136,3 +136,29 @@ class PublicStudentInput(BaseModel):
 class PublicSubmissionResponse(BaseModel):
     submitted: bool = True
     message: str
+    reference: str
+
+
+class PublicSubmissionItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    uuid: UUID
+    reference: str
+    status: Literal["pending", "approved", "rejected"]
+    payload: dict
+    photo_url: str | None = None
+    created_at: datetime
+    reviewed_at: datetime | None
+    rejection_note: str | None
+    student_uuid: UUID | None = None
+
+
+class PublicSubmissionList(BaseModel):
+    items: list[PublicSubmissionItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class PublicSubmissionReject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    note: str | None = Field(default=None, max_length=500)

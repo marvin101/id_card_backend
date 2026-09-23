@@ -28,6 +28,7 @@ from app.core.file_storage import MAX_STUDENT_PHOTO_SIZE, StorageError
 from app.schemas.public_form import PublicFormConfigWrite, PublicStudentInput
 from app.models.student import Student
 from app.models.student_audit_event import StudentAuditEvent
+from app.models.public_form import PublicFormSubmission
 
 
 REQUIRED = ["session_uuid", "class_uuid", "section_uuid", "admission_no", "full_name"]
@@ -209,18 +210,18 @@ def _academic_records(payload_json):
     )
 
 
-def test_public_submission_creates_only_pending_student_and_origin_audit(monkeypatch):
+def test_public_submission_creates_pending_submission_not_student(monkeypatch):
     payload_json = _submission_json()
     session, school_class, section = _academic_records(payload_json)
     db = _SubmissionDatabase([_submission_form()], [session], [school_class], [section], [])
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
     response = asyncio.run(submit_public_form("token", _request(), payload_json, None, db))
-    student = next(item for item in db.added if isinstance(item, Student))
-    audit = next(item for item in db.added if isinstance(item, StudentAuditEvent))
     assert response.submitted is True and db.committed is True
-    assert student.verification_status == "pending"
-    assert student.verified_at is None and student.printed_at is None and student.print_count == 0
-    assert audit.new_value["source"] == "public_form"
+    submission = next(item for item in db.added if isinstance(item, PublicFormSubmission))
+    assert submission.status == "pending"
+    assert submission.payload["admission_no"] == "A-100"
+    assert response.reference == submission.reference
+    assert not any(isinstance(item, Student) for item in db.added)
 
 
 def test_public_submission_rejects_unconfigured_system_field(monkeypatch):
@@ -233,14 +234,13 @@ def test_public_submission_rejects_unconfigured_system_field(monkeypatch):
         asyncio.run(submit_public_form("token", _request(), json.dumps(payload), None, db))
 
 
-def test_public_submission_duplicate_admission_is_conflict(monkeypatch):
+def test_public_submission_defers_duplicate_conflict_until_approval(monkeypatch):
     payload_json = _submission_json()
     session, school_class, section = _academic_records(payload_json)
-    db = _SubmissionDatabase([_submission_form()], [session], [school_class], [section], [SimpleNamespace(id=77)])
+    db = _SubmissionDatabase([_submission_form()], [session], [school_class], [section], [])
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
-    with pytest.raises(HTTPException) as raised:
-        asyncio.run(submit_public_form("token", _request(), payload_json, None, db))
-    assert raised.value.status_code == 409
+    response = asyncio.run(submit_public_form("token", _request(), payload_json, None, db))
+    assert response.submitted is True
 
 
 def test_public_submission_rejects_photo_when_disabled(monkeypatch):
@@ -290,16 +290,16 @@ def test_optional_enabled_photo_can_be_omitted(monkeypatch):
     assert db.committed is True
 
 
-def test_public_photo_success_uses_managed_student_path(monkeypatch):
+def test_public_photo_success_uses_managed_pending_path(monkeypatch):
     payload_json = _submission_json()
     session, school_class, section = _academic_records(payload_json)
     db = _SubmissionDatabase([_submission_form(allow_photo=True)], [session], [school_class], [section], [])
     photo = UploadFile(filename="photo.png", file=io.BytesIO(b"image"), headers=Headers({"content-type": "image/png"}))
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.api.public_forms.save_student_photo", lambda student_uuid, content, content_type: f"students/{student_uuid}/photo_test.png")
+    monkeypatch.setattr("app.api.public_forms.save_bulk_photo_temp", lambda **kwargs: f"schools/{kwargs['school_uuid']}/bulk-photo-imports/{kwargs['upload_uuid']}/photo_test.png")
     asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
-    student = next(item for item in db.added if isinstance(item, Student))
-    assert student.photo_path == f"students/{student.uuid}/photo_test.png"
+    submission = next(item for item in db.added if isinstance(item, PublicFormSubmission))
+    assert submission.photo_path and "bulk-photo-imports" in submission.photo_path
 
 
 def test_required_enabled_photo_submission_succeeds(monkeypatch):
@@ -322,10 +322,8 @@ def test_required_enabled_photo_submission_succeeds(monkeypatch):
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "app.api.public_forms.save_student_photo",
-        lambda student_uuid, content, content_type: (
-            f"students/{student_uuid}/photo_test.png"
-        ),
+        "app.api.public_forms.save_bulk_photo_temp",
+        lambda **kwargs: f"schools/{kwargs['school_uuid']}/bulk-photo-imports/{kwargs['upload_uuid']}/photo_test.png",
     )
     response = asyncio.run(
         submit_public_form("token", _request(), payload_json, photo, db)
@@ -368,7 +366,7 @@ def test_storage_failure_is_generic_and_rolls_back(monkeypatch):
     db = _SubmissionDatabase([_submission_form(allow_photo=True)], [session], [school_class], [section], [])
     photo = UploadFile(filename="photo.png", file=io.BytesIO(b"image"), headers=Headers({"content-type": "image/png"}))
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.api.public_forms.save_student_photo", lambda *args: (_ for _ in ()).throw(StorageError("provider secret detail")))
+    monkeypatch.setattr("app.api.public_forms.save_bulk_photo_temp", lambda **kwargs: (_ for _ in ()).throw(StorageError("provider secret detail")))
     with pytest.raises(HTTPException) as raised:
         asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
     assert raised.value.status_code == 502
@@ -384,7 +382,7 @@ def test_database_failure_after_photo_upload_cleans_object(monkeypatch):
     photo = UploadFile(filename="photo.png", file=io.BytesIO(b"image"), headers=Headers({"content-type": "image/png"}))
     deleted = []
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
-    monkeypatch.setattr("app.api.public_forms.save_student_photo", lambda student_uuid, content, content_type: f"students/{student_uuid}/photo_test.png")
+    monkeypatch.setattr("app.api.public_forms.save_bulk_photo_temp", lambda **kwargs: f"schools/{kwargs['school_uuid']}/bulk-photo-imports/{kwargs['upload_uuid']}/photo_test.png")
     monkeypatch.setattr("app.api.public_forms.delete_storage_object", deleted.append)
     with pytest.raises(RuntimeError, match="database unavailable"):
         asyncio.run(submit_public_form("token", _request(), payload_json, photo, db))
@@ -393,6 +391,17 @@ def test_database_failure_after_photo_upload_cleans_object(monkeypatch):
 
 
 def test_public_post_rate_limit_uses_its_own_bucket(monkeypatch):
+    public_form_rate_limiter.reset()
+
+
+def test_public_rate_limit_cannot_be_bypassed_by_rotating_tokens(monkeypatch):
+    public_form_rate_limiter.reset()
+    monkeypatch.setattr(settings, "auth_rate_limit_enabled", True)
+    monkeypatch.setattr(settings, "public_form_get_rate_limit_requests", 1)
+    enforce_public_form_rate_limit(_request(), submission=False, token="invalid-one")
+    with pytest.raises(HTTPException) as raised:
+        enforce_public_form_rate_limit(_request(), submission=False, token="invalid-two")
+    assert raised.value.status_code == 429
     public_form_rate_limiter.reset()
     monkeypatch.setattr(settings, "auth_rate_limit_enabled", True)
     monkeypatch.setattr(settings, "public_form_submit_rate_limit_requests", 1)

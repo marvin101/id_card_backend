@@ -134,20 +134,29 @@ def enforce_registration_rate_limit(request: Request) -> None:
     )
 
 
-def enforce_public_form_rate_limit(request: Request, *, submission: bool) -> None:
+def enforce_public_form_rate_limit(request: Request, *, submission: bool, token: str | None = None) -> None:
     if not settings.auth_rate_limit_enabled:
         return
-    decision = public_form_rate_limiter.check(
-        f"public-form-{'post' if submission else 'get'}:{get_client_address(request)}",
-        limit=(settings.public_form_submit_rate_limit_requests if submission else settings.public_form_get_rate_limit_requests),
-        window_seconds=settings.auth_rate_limit_window_seconds,
-    )
-    if not decision.allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests. Please try again later.",
-            headers={"Retry-After": str(decision.retry_after)},
+    operation = "post" if submission else "get"
+    address = get_client_address(request)
+    limit = settings.public_form_submit_rate_limit_requests if submission else settings.public_form_get_rate_limit_requests
+    # The IP ceiling cannot contain attacker-controlled token data. The second
+    # bucket prevents one noisy form link from consuming another link's quota.
+    for key in (
+        f"public-form-{operation}:ip:{address}",
+        f"public-form-{operation}:token:{token or 'unknown'}:{address}",
+    ):
+        decision = public_form_rate_limiter.check(
+            key,
+            limit=limit,
+            window_seconds=settings.auth_rate_limit_window_seconds,
         )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+                headers={"Retry-After": str(decision.retry_after)},
+            )
 
 
 def enforce_public_design_rate_limit(request: Request) -> None:
