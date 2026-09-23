@@ -171,7 +171,7 @@ def _bulk_context(student):
         school_id=20,
         user_id=1,
         expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-        status="pending",
+        status="previewed",
         total_files=1,
         manifest=[
             {
@@ -182,6 +182,12 @@ def _bulk_context(student):
                 "extension": ".png",
                 "file_size": len(_png_bytes()),
                 "status": "ready",
+                "match_key": "a-1",
+                "student_uuid": str(student.uuid),
+                "student_name": student.full_name,
+                "has_existing_photo": bool(student.photo_path),
+                "replacement": bool(student.photo_path),
+                "preview_photo_path": student.photo_path,
             }
         ],
     )
@@ -577,10 +583,10 @@ def test_bulk_database_failure_keeps_old_and_cleans_new_upload(monkeypatch):
     monkeypatch.setattr(bulk_api, "save_student_photo", lambda *_args: new_url)
     monkeypatch.setattr(bulk_api, "delete_storage_object", deleted.append)
 
-    response = _commit_bulk(monkeypatch, student, session)
+    with pytest.raises(HTTPException) as exc_info:
+        _commit_bulk(monkeypatch, student, session)
 
-    assert response.uploaded_count == 0
-    assert response.failed_count == 1
+    assert exc_info.value.status_code == 503
     assert student.photo_path == old_url
     assert session.rollbacks == 1
     assert deleted == [f"students/{student.uuid}/photo_new.png"]

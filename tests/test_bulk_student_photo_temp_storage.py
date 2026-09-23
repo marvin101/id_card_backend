@@ -159,6 +159,7 @@ def _manifest(school_uuid, student, *, expires_at=None):
                 "replacement": bool(student.photo_path),
                 "has_existing_photo": bool(student.photo_path),
                 "detail": None,
+                "preview_photo_path": student.photo_path,
             }
         ],
     )
@@ -203,6 +204,7 @@ def test_upload_persists_metadata_only_manifest_with_temp_object(monkeypatch):
         "student_name": "Asha Singh",
         "has_existing_photo": False,
         "replacement": False,
+        "preview_photo_path": None,
     }
     assert uploaded[0][1] == _png_bytes()
     assert uploaded[0][2] == "image/png"
@@ -270,6 +272,9 @@ def test_zip_paths_directories_and_invalid_inputs_are_rejected_or_flagged(monkey
     with pytest.raises(bulk_core.BulkPhotoValidationError, match="Unsafe archive path"):
         bulk_core.inspect_zip(_zip_bytes({"../A-1.png": _png_bytes()}))
 
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="Unsafe archive path"):
+        bulk_core.inspect_zip(_zip_bytes({"C:\\A-1.png": _png_bytes()}))
+
     with pytest.raises(bulk_core.BulkPhotoValidationError, match="Nested archive paths"):
         bulk_core.inspect_zip(_zip_bytes({"nested/A-1.png": _png_bytes()}))
 
@@ -331,17 +336,17 @@ def test_failed_promotion_preserves_previous_photo_and_temp_object(monkeypatch):
     monkeypatch.setattr(bulk_api, "delete_storage_object", deleted.append)
     old_photo = student.photo_path
 
-    response = bulk_api.commit_bulk_student_photos(
-        school_uuid=school_uuid,
-        manifest_uuid=manifest.uuid,
-        payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
-        db=session,
-        current_user=SimpleNamespace(id=1),
-    )
+    with pytest.raises(HTTPException) as exc_info:
+        bulk_api.commit_bulk_student_photos(
+            school_uuid=school_uuid,
+            manifest_uuid=manifest.uuid,
+            payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
 
-    assert response.failed_count == 1
-    assert response.items[0].detail == "Photo could not be uploaded."
-    assert "storage offline" not in response.items[0].detail
+    assert exc_info.value.status_code == 502
+    assert "storage offline" not in exc_info.value.detail
     assert student.photo_path == old_photo
     assert deleted == []
     assert manifest.manifest[0]["temp_storage_path"] == temp_path
@@ -380,7 +385,7 @@ def test_successful_add_audits_then_cleans_consumed_temp(monkeypatch):
     assert student.photo_path == new_url
     assert session.added[0].event_type == "student_photo_added"
     assert deleted == [temp_path]
-    assert manifest.manifest[0]["temp_storage_path"] is None
+    assert manifest.status == "completed"
 
 
 def test_temp_cleanup_failure_is_logged_but_commit_succeeds(monkeypatch, caplog):
@@ -513,3 +518,261 @@ def test_expired_owned_preview_cleans_storage_and_returns_gone(monkeypatch):
 
     assert exc_info.value.status_code == 410
     assert cleaned == [(manifest.uuid, school_uuid)]
+
+
+def test_duplicate_filenames_and_identifiers_are_reported_ambiguously():
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("A-1.jpg", _png_bytes())
+        archive.writestr("A-1.jpg", _png_bytes())
+    duplicate_names = bulk_core.inspect_zip(
+        output.getvalue(),
+        mark_all_duplicates=True,
+        duplicate_status="duplicate",
+    )
+    assert {item["status"] for item in duplicate_names} == {"duplicate"}
+    assert all("filename" in item["detail"].casefold() for item in duplicate_names)
+
+    duplicate_student = bulk_core.inspect_zip(
+        _zip_bytes({"A-1.jpg": _png_bytes(), "a-1.png": _png_bytes()}),
+        mark_all_duplicates=True,
+        duplicate_status="duplicate",
+    )
+    assert {item["status"] for item in duplicate_student} == {"duplicate"}
+    assert all("same admission number" in item["detail"].casefold() for item in duplicate_student)
+
+
+def test_corrupt_zip_and_corrupt_image_are_rejected_or_flagged():
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="valid ZIP"):
+        bulk_core.inspect_zip(b"not-a-zip")
+
+    item = bulk_core.inspect_zip(_zip_bytes({"A-1.png": b"not-an-image"}))[0]
+    assert item["status"] == "invalid"
+    assert "valid image" in item["detail"]
+
+
+def test_archive_count_expanded_size_and_ratio_limits(monkeypatch):
+    monkeypatch.setattr(bulk_core, "MAX_FILES", 1)
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="more than 1"):
+        bulk_core.inspect_zip(_zip_bytes({"A.png": _png_bytes(), "B.png": _png_bytes()}))
+
+    monkeypatch.setattr(bulk_core, "MAX_FILES", 5000)
+    monkeypatch.setattr(bulk_core, "MAX_TOTAL_UNCOMPRESSED", 1)
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="100 MB"):
+        bulk_core.inspect_zip(_zip_bytes({"A.png": _png_bytes()}))
+
+    monkeypatch.setattr(bulk_core, "MAX_TOTAL_UNCOMPRESSED", 100 * 1024 * 1024)
+    monkeypatch.setattr(bulk_core, "MAX_COMPRESSION_RATIO", 1)
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="100:1"):
+        bulk_core.inspect_zip(_zip_bytes({"A.png": b"x" * 1000}))
+
+
+def test_symbolic_links_are_rejected_and_macos_metadata_is_ignored():
+    link_zip = io.BytesIO()
+    with zipfile.ZipFile(link_zip, "w") as archive:
+        info = zipfile.ZipInfo("A-1.png")
+        info.create_system = 3
+        info.external_attr = 0o120777 << 16
+        archive.writestr(info, b"target")
+    with pytest.raises(bulk_core.BulkPhotoValidationError, match="Symbolic links"):
+        bulk_core.inspect_zip(link_zip.getvalue())
+
+    mac_zip = io.BytesIO()
+    with zipfile.ZipFile(mac_zip, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("__MACOSX/", b"")
+        archive.writestr("__MACOSX/._A-1.png", b"metadata")
+        archive.writestr(".DS_Store", b"metadata")
+        archive.writestr("A-1.png", _png_bytes())
+    items = bulk_core.inspect_zip(mac_zip.getvalue())
+    assert [item["filename"] for item in items] == ["A-1.png"]
+
+
+def test_preview_reports_duplicate_count_and_blocks_confirmation(monkeypatch):
+    student = _student()
+    manifest = SimpleNamespace(
+        uuid=uuid4(),
+        total_files=2,
+        status="uploaded",
+        manifest=[
+            {
+                "filename": "A-1.jpg",
+                "admission_no": "A-1",
+                "status": "duplicate",
+                "detail": "Duplicate filename in archive.",
+            },
+            {
+                "filename": "A-1.jpeg",
+                "admission_no": "A-1",
+                "status": "duplicate",
+                "detail": "Multiple files map to the same admission number.",
+            },
+        ],
+    )
+    session = _ManifestSession(manifest)
+    monkeypatch.setattr(bulk_api, "_student_lookup", lambda *_args: {"a-1": student})
+
+    response = bulk_api._preview_manifest(session, manifest, 20)
+
+    assert response.duplicate_count == 2
+    assert response.invalid_count == 0
+    assert response.can_commit is False
+
+
+def test_commit_rejects_student_or_photo_state_changed_since_preview(monkeypatch):
+    school_uuid = uuid4()
+    student = _student()
+    manifest = _manifest(school_uuid, student)
+    session = _ManifestSession(manifest)
+    monkeypatch.setattr(
+        bulk_api,
+        "_authorize",
+        lambda *_args: SimpleNamespace(id=20, uuid=school_uuid),
+    )
+    monkeypatch.setattr(bulk_api, "_student_lookup", lambda *_args: {"a-1": student})
+    student.photo_path = "changed-after-preview.png"
+
+    with pytest.raises(HTTPException) as exc_info:
+        bulk_api.commit_bulk_student_photos(
+            school_uuid=school_uuid,
+            manifest_uuid=manifest.uuid,
+            payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "changed after preview" in exc_info.value.detail
+
+
+def test_commit_requires_preview_and_fully_valid_batch(monkeypatch):
+    school_uuid = uuid4()
+    student = _student()
+    manifest = _manifest(school_uuid, student)
+    session = _ManifestSession(manifest)
+    monkeypatch.setattr(
+        bulk_api,
+        "_authorize",
+        lambda *_args: SimpleNamespace(id=20, uuid=school_uuid),
+    )
+    monkeypatch.setattr(bulk_api, "_student_lookup", lambda *_args: {"a-1": student})
+    manifest.status = "uploaded"
+    with pytest.raises(HTTPException, match="Preview") as exc_info:
+        bulk_api.commit_bulk_student_photos(
+            school_uuid=school_uuid,
+            manifest_uuid=manifest.uuid,
+            payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
+    assert exc_info.value.status_code == 409
+
+    manifest.status = "previewed"
+    manifest.manifest[0]["status"] = "unmatched"
+    with pytest.raises(HTTPException, match="not fully valid"):
+        bulk_api.commit_bulk_student_photos(
+            school_uuid=school_uuid,
+            manifest_uuid=manifest.uuid,
+            payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
+
+
+def test_upload_rejects_non_zip_filename_before_storage(monkeypatch):
+    school_uuid = uuid4()
+    monkeypatch.setattr(
+        bulk_api,
+        "_authorize",
+        lambda *_args: SimpleNamespace(id=20, uuid=school_uuid),
+    )
+    monkeypatch.setattr(
+        bulk_api,
+        "cleanup_expired_bulk_photo_imports",
+        lambda *_args, **_kwargs: 0,
+    )
+    archive = UploadFile(
+        filename="photos.txt",
+        file=io.BytesIO(_zip_bytes({"A-1.png": _png_bytes()})),
+        headers={"content-type": "application/zip"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            bulk_api.upload_bulk_student_photos(
+                school_uuid=school_uuid,
+                archive=archive,
+                db=_UploadSession(),
+                current_user=SimpleNamespace(id=1),
+            )
+        )
+
+    assert exc_info.value.status_code == 422
+
+
+def test_second_storage_failure_cleans_first_upload_and_changes_no_students(monkeypatch):
+    school_uuid = uuid4()
+    first = _student()
+    second = _student()
+    second.uuid = uuid4()
+    second.admission_no = "B-2"
+    second.full_name = "Bilal Khan"
+    manifest = _manifest(school_uuid, first)
+    second_temp = (
+        f"schools/{school_uuid}/bulk-photo-imports/"
+        f"{manifest.uuid}/{uuid4().hex}.png"
+    )
+    manifest.total_files = 2
+    manifest.manifest.append(
+        {
+            **manifest.manifest[0],
+            "item_uuid": str(uuid4()),
+            "filename": "B-2.png",
+            "admission_no": "B-2",
+            "match_key": "b-2",
+            "temp_storage_path": second_temp,
+            "student_uuid": str(second.uuid),
+            "student_name": second.full_name,
+        }
+    )
+    session = _ManifestSession(manifest)
+    monkeypatch.setattr(
+        bulk_api,
+        "_authorize",
+        lambda *_args: SimpleNamespace(id=20, uuid=school_uuid),
+    )
+    monkeypatch.setattr(
+        bulk_api,
+        "_student_lookup",
+        lambda *_args: {"a-1": first, "b-2": second},
+    )
+    monkeypatch.setattr(bulk_api, "download_storage_object", lambda _path: _png_bytes())
+    first_url = (
+        "https://example.supabase.co/storage/v1/object/public/student-photos/"
+        f"students/{first.uuid}/photo_new.png"
+    )
+    calls = 0
+
+    def save_photo(*_args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise StorageError("provider failed")
+        return first_url
+
+    deleted = []
+    monkeypatch.setattr(bulk_api, "save_student_photo", save_photo)
+    monkeypatch.setattr(bulk_api, "delete_storage_object", deleted.append)
+
+    with pytest.raises(HTTPException) as exc_info:
+        bulk_api.commit_bulk_student_photos(
+            school_uuid=school_uuid,
+            manifest_uuid=manifest.uuid,
+            payload=bulk_api.BulkPhotoCommitRequest(confirmed=True),
+            db=session,
+            current_user=SimpleNamespace(id=1),
+        )
+
+    assert exc_info.value.status_code == 502
+    assert first.photo_path is None and second.photo_path is None
+    assert session.commits == 0
+    assert deleted == [f"students/{first.uuid}/photo_new.png"]

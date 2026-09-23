@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import stat
 import zipfile
+from collections import Counter
 from pathlib import PurePosixPath
 
 from PIL import Image
@@ -11,6 +13,7 @@ MAX_ZIP_SIZE = 25 * 1024 * 1024
 MAX_FILES = 5000
 MAX_TOTAL_UNCOMPRESSED = 100 * 1024 * 1024
 MAX_IMAGE_SIZE = 5 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 100
 
 ALLOWED_EXTENSIONS = {
     ".jpg",
@@ -47,7 +50,7 @@ def safe_archive_filename(filename: str) -> str:
     normalized = filename.replace("\\", "/")
     path = PurePosixPath(normalized)
 
-    if path.is_absolute():
+    if path.is_absolute() or (path.parts and path.parts[0].endswith(":")):
         raise BulkPhotoValidationError(
             f"Unsafe archive path: {filename}"
         )
@@ -63,6 +66,21 @@ def safe_archive_filename(filename: str) -> str:
         )
 
     return path.name
+
+
+def _is_ignored_system_entry(filename: str) -> bool:
+    normalized = filename.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    return (
+        bool(path.parts and path.parts[0] == "__MACOSX")
+        or path.name == ".DS_Store"
+        or path.name.startswith("._")
+    )
+
+
+def _is_symbolic_link(info: zipfile.ZipInfo) -> bool:
+    unix_mode = info.external_attr >> 16
+    return stat.S_IFMT(unix_mode) == stat.S_IFLNK
 
 
 def admission_no_from_filename(filename: str) -> str:
@@ -117,6 +135,8 @@ def inspect_zip(
     *,
     identifier_key: str = "admission_no",
     identifier_label: str = "admission number",
+    mark_all_duplicates: bool = False,
+    duplicate_status: str = "invalid",
 ) -> list[dict]:
 
     validate_archive_size(content)
@@ -132,12 +152,38 @@ def inspect_zip(
 
     all_infos = archive.infolist()
 
-    if any(info.is_dir() for info in all_infos):
+    for info in all_infos:
+        normalized = info.filename.replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or (path.parts and path.parts[0].endswith(":"))
+        ):
+            raise BulkPhotoValidationError(
+                f"Unsafe archive path: {info.filename}"
+            )
+
+    if any(_is_symbolic_link(info) for info in all_infos):
+        raise BulkPhotoValidationError(
+            "Symbolic links are not allowed in the ZIP archive."
+        )
+
+    if any(info.flag_bits & 0x1 for info in all_infos):
+        raise BulkPhotoValidationError(
+            "Encrypted ZIP entries are not supported."
+        )
+
+    infos = [
+        info
+        for info in all_infos
+        if not _is_ignored_system_entry(info.filename)
+    ]
+
+    if any(info.is_dir() for info in infos):
         raise BulkPhotoValidationError(
             "Directory entries are not allowed in the ZIP archive."
         )
-
-    infos = all_infos
 
     if not infos:
         raise BulkPhotoValidationError(
@@ -159,6 +205,18 @@ def inspect_zip(
             "Expanded ZIP contents must not exceed 100 MB."
         )
 
+    if any(
+        info.file_size > 0
+        and (
+            info.compress_size == 0
+            or info.file_size / info.compress_size > MAX_COMPRESSION_RATIO
+        )
+        for info in infos
+    ):
+        raise BulkPhotoValidationError(
+            "ZIP entry compression ratio exceeds the 100:1 safety limit."
+        )
+
     try:
         if archive.testzip() is not None:
             raise BulkPhotoValidationError(
@@ -170,14 +228,16 @@ def inspect_zip(
         ) from exc
 
     result: list[dict] = []
-
+    safe_names = [safe_archive_filename(info.filename) for info in infos]
+    filename_counts = Counter(name.casefold() for name in safe_names)
+    identifier_counts = Counter(
+        admission_no_from_filename(name).casefold()
+        for name in safe_names
+        if admission_no_from_filename(name)
+    )
     seen_identifiers: set[str] = set()
 
-    for info in infos:
-
-        filename = safe_archive_filename(
-            info.filename
-        )
+    for info, filename in zip(infos, safe_names, strict=True):
 
         extension = (
             PurePosixPath(filename)
@@ -227,7 +287,7 @@ def inspect_zip(
 
         identifier_value = identifier.casefold()
 
-        if identifier_value in seen_identifiers:
+        if mark_all_duplicates and filename_counts[filename.casefold()] > 1:
 
             result.append(
                 {
@@ -235,19 +295,33 @@ def inspect_zip(
                     identifier_key: identifier,
                     "extension": extension,
                     "file_size": info.file_size,
-                    "status": "invalid",
+                    "status": duplicate_status,
+                    "detail": "Duplicate filename in archive.",
+                }
+            )
+
+            continue
+
+        if (
+            mark_all_duplicates and identifier_counts[identifier_value] > 1
+        ) or identifier_value in seen_identifiers:
+
+            result.append(
+                {
+                    "filename": filename,
+                    identifier_key: identifier,
+                    "extension": extension,
+                    "file_size": info.file_size,
+                    "status": duplicate_status,
                     "detail": (
-                        f"Duplicate {identifier_label} "
-                        "in archive."
+                        f"Multiple files map to the same {identifier_label}."
                     ),
                 }
             )
 
             continue
 
-        seen_identifiers.add(
-            identifier_value
-        )
+        seen_identifiers.add(identifier_value)
 
         if info.file_size > MAX_IMAGE_SIZE:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -80,6 +81,7 @@ class BulkPhotoPreviewResponse(BaseModel):
     ready_count: int
     unmatched_count: int
     invalid_count: int
+    duplicate_count: int
     replacement_count: int
 
     can_commit: bool
@@ -111,6 +113,7 @@ class BulkPhotoCommitResponse(BaseModel):
     failed_count: int
     unmatched_count: int
     invalid_count: int
+    duplicate_count: int
 
     replacement_count: int
 
@@ -150,14 +153,15 @@ def _authorize(
 def _student_lookup(
     db: Session,
     school_id: int,
+    for_update: bool = False,
 ) -> dict[str, Student]:
-
-    students = db.execute(
-        select(Student).where(
-            Student.school_id == school_id,
-            Student.is_active.is_(True),
-        )
-    ).scalars().all()
+    statement = select(Student).where(
+        Student.school_id == school_id,
+        Student.is_active.is_(True),
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    students = db.execute(statement).scalars().all()
 
     lookup: dict[str, Student] = {}
     for student in students:
@@ -191,7 +195,7 @@ def _resolved_manifest_entries(
 
     for original in entries:
         item = dict(original)
-        if item.get("status") in {"invalid", "uploaded"}:
+        if item.get("status") in {"invalid", "duplicate", "uploaded"}:
             resolved.append(item)
             continue
 
@@ -204,6 +208,7 @@ def _resolved_manifest_entries(
                 student_name=None,
                 has_existing_photo=False,
                 replacement=False,
+                preview_photo_path=None,
                 detail="Student was not found in the selected school.",
             )
         else:
@@ -214,6 +219,7 @@ def _resolved_manifest_entries(
                 student_name=student.full_name,
                 has_existing_photo=has_existing_photo,
                 replacement=has_existing_photo,
+                preview_photo_path=student.photo_path,
                 detail=None,
             )
         resolved.append(item)
@@ -338,6 +344,7 @@ def _preview_manifest(
     ready_count = sum(item.status == "ready" for item in items)
     unmatched_count = sum(item.status == "unmatched" for item in items)
     invalid_count = sum(item.status == "invalid" for item in items)
+    duplicate_count = sum(item.status == "duplicate" for item in items)
     replacement_count = sum(
         item.status == "ready" and item.has_existing_photo
         for item in items
@@ -358,7 +365,9 @@ def _preview_manifest(
             ready_count > 0
             and unmatched_count == 0
             and invalid_count == 0
+            and duplicate_count == 0
         ),
+        duplicate_count=duplicate_count,
         items=items,
     )
 
@@ -399,7 +408,7 @@ async def upload_bulk_student_photos(
             exc_info=True,
         )
 
-    if archive.content_type not in {
+    if Path(archive.filename or "").suffix.casefold() != ".zip" or archive.content_type not in {
         "application/zip",
         "application/x-zip-compressed",
         "application/octet-stream",
@@ -412,7 +421,11 @@ async def upload_bulk_student_photos(
     content = await archive.read(MAX_ZIP_SIZE + 1)
 
     try:
-        entries = inspect_zip(content)
+        entries = inspect_zip(
+            content,
+            mark_all_duplicates=True,
+            duplicate_status="duplicate",
+        )
 
     except BulkPhotoValidationError as exc:
         raise HTTPException(
@@ -636,134 +649,125 @@ def commit_bulk_student_photos(
             detail="Bulk photo upload has already been completed.",
         )
 
+    if manifest.status != "previewed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Preview this bulk photo upload before confirming it.",
+        )
+
     students = _student_lookup(
         db,
         school.id,
+        True,
     )
-
-    results: list[BulkPhotoCommitItem] = []
-
-    uploaded_count = 0
-    failed_count = 0
-    unmatched_count = 0
-    invalid_count = 0
-    replacement_count = 0
-
-    all_processed = True
-
     manifest_entries = [dict(item) for item in manifest.manifest]
 
-    for item in manifest_entries:
-
-        filename = item.get("filename", "")
-        admission_no = item.get("admission_no", "")
-
-        if item.get("status") == "invalid":
-
-            invalid_count += 1
-            all_processed = False
-
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    status="invalid",
-                    detail=item.get("detail"),
-                )
-            )
-
-            continue
-
-        if item.get("status") == "uploaded":
-            uploaded_count += 1
-            replacement_count += int(bool(item.get("replacement")))
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    student_uuid=item.get("student_uuid"),
-                    student_name=item.get("student_name"),
-                    status="uploaded",
-                    detail="Photo was already uploaded.",
-                )
-            )
-            continue
-
-        student = students.get(
-            admission_no.strip().casefold()
+    invalid_count = sum(item.get("status") == "invalid" for item in manifest_entries)
+    duplicate_count = sum(item.get("status") == "duplicate" for item in manifest_entries)
+    unmatched_count = sum(item.get("status") == "unmatched" for item in manifest_entries)
+    if invalid_count or duplicate_count or unmatched_count or not manifest_entries:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The batch is not fully valid. Choose another ZIP and preview it again."
+            ),
         )
 
-        if student is None:
-
-            unmatched_count += 1
-            all_processed = False
-
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    status="unmatched",
-                    detail=(
-                        "Student was not found in "
-                        "the selected school."
-                    ),
-                )
+    candidates: list[dict[str, Any]] = []
+    for item in manifest_entries:
+        admission_no = item.get("admission_no", "").strip()
+        student = students.get(admission_no.casefold())
+        if (
+            item.get("status") != "ready"
+            or item.get("match_key") != admission_no.casefold()
+            or student is None
+            or str(student.uuid) != item.get("student_uuid")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Student matching changed after preview. Preview the ZIP again before confirming."
+                ),
             )
-
-            continue
-
+        if student.photo_path != item.get("preview_photo_path"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "A student photo changed after preview. Preview the ZIP again before confirming."
+                ),
+            )
         temp_storage_path = managed_bulk_photo_temp_storage_path(
             item.get("temp_storage_path"),
             school_uuid=school.uuid,
             upload_uuid=manifest.uuid,
         )
-
         if temp_storage_path is None:
-
-            failed_count += 1
-            all_processed = False
-
-            results.append(
-                BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
-                    student_uuid=student.uuid,
-                    student_name=student.full_name,
-                    status="failed",
-                    detail=(
-                        "Temporary photo object is missing or invalid."
-                    ),
-                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A staged photo is missing or invalid. Upload the ZIP again.",
             )
-
-            continue
-
-        previous_photo_path = student.photo_path
-        had_existing_photo = bool(previous_photo_path)
-        public_url: str | None = None
-        previous_item = dict(item)
-
         try:
             content = download_storage_object(temp_storage_path)
+        except StorageError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Staged photo storage is currently unavailable; no photos were changed.",
+            ) from exc
+        candidates.append(
+            {
+                "item": item,
+                "student": student,
+                "content": content,
+                "temp_storage_path": temp_storage_path,
+                "previous_photo_path": student.photo_path,
+            }
+        )
+
+    new_storage_paths: list[str] = []
+    try:
+        for candidate in candidates:
+            student = candidate["student"]
             public_url = save_student_photo(
                 student.uuid,
-                content,
-                item.get("content_type"),
+                candidate["content"],
+                candidate["item"].get("content_type"),
             )
+            new_storage_path = managed_student_photo_storage_path(public_url, student.uuid)
+            if new_storage_path is None:
+                raise StorageError("Storage returned an unmanaged student photo path")
+            candidate["public_url"] = public_url
+            new_storage_paths.append(new_storage_path)
+    except (StorageError, ValueError) as exc:
+        _safe_delete_paths(new_storage_paths, context="failed batch upload")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The photo batch could not be stored; no student records were changed.",
+        ) from exc
+
+    results: list[BulkPhotoCommitItem] = []
+    replacement_count = 0
+    try:
+        for candidate in candidates:
+            item = candidate["item"]
+            student = candidate["student"]
+            previous_photo_path = candidate["previous_photo_path"]
+            public_url = candidate["public_url"]
+            had_existing_photo = bool(previous_photo_path)
+            replacement_count += int(had_existing_photo)
 
             student.photo_path = public_url
-
             record_student_audit(
                 db,
                 student=student,
                 actor=current_user,
-                event_type="student_photo_replaced" if had_existing_photo else "student_photo_added",
+                event_type=(
+                    "student_photo_replaced" if had_existing_photo else "student_photo_added"
+                ),
                 field_name="photo_path",
                 old_value=previous_photo_path,
                 new_value=public_url,
                 note="Bulk photo import",
             )
-
             item.update(
                 status="uploaded",
                 detail="Photo uploaded successfully.",
@@ -772,102 +776,56 @@ def commit_bulk_student_photos(
                 has_existing_photo=had_existing_photo,
                 replacement=had_existing_photo,
             )
-            manifest.manifest = manifest_entries
-            db.commit()
-
-        except Exception as exc:
-
-            db.rollback()
-            logger.error(
-                "Bulk photo item failed for import %s",
-                manifest.uuid,
-                exc_info=True,
-            )
-            student.photo_path = previous_photo_path
-            item.clear()
-            item.update(previous_item)
-            manifest.manifest = manifest_entries
-
-            new_storage_path = managed_student_photo_storage_path(
-                public_url,
-                student.uuid,
-            )
-            if new_storage_path is not None:
-                try:
-                    delete_storage_object(new_storage_path)
-                except Exception:
-                    logger.warning(
-                        "Failed to clean up newly orphaned student photo %s",
-                        new_storage_path,
-                        exc_info=True,
-                    )
-
-            failed_count += 1
-            all_processed = False
-
             results.append(
                 BulkPhotoCommitItem(
-                    filename=filename,
-                    admission_no=admission_no,
+                    filename=item.get("filename", ""),
+                    admission_no=item.get("admission_no", ""),
                     student_uuid=student.uuid,
                     student_name=student.full_name,
-                    status="failed",
-                    detail="Photo could not be uploaded.",
+                    status="uploaded",
+                    detail="Photo uploaded successfully.",
                 )
             )
 
-            continue
-
-        uploaded_count += 1
-
-        if had_existing_photo:
-            replacement_count += 1
-
-        results.append(
-            BulkPhotoCommitItem(
-                filename=filename,
-                admission_no=admission_no,
-                student_uuid=student.uuid,
-                student_name=student.full_name,
-                status="uploaded",
-                detail="Photo uploaded successfully.",
-            )
-        )
-
-        previous_storage_path = managed_student_photo_storage_path(
-            previous_photo_path,
-            student.uuid,
-        )
-        if previous_storage_path is not None:
-            try:
-                delete_storage_object(previous_storage_path)
-            except Exception:
-                logger.warning(
-                    "Failed to clean up replaced student photo %s",
-                    previous_storage_path,
-                    exc_info=True,
-                )
-
-        if _safe_delete_paths([temp_storage_path], context="consumed temp"):
-            item["temp_storage_path"] = None
-
-    manifest.manifest = manifest_entries
-    if all_processed:
+        manifest.manifest = manifest_entries
         manifest.status = "completed"
         db.commit()
+    except Exception as exc:
+        for candidate in candidates:
+            candidate["student"].photo_path = candidate["previous_photo_path"]
+        db.rollback()
+        _safe_delete_paths(new_storage_paths, context="rolled-back batch upload")
+        logger.error("Bulk photo database transaction failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The photo batch could not be saved; no student records were changed.",
+        ) from exc
 
-    else:
-        manifest.status = "partial"
-        db.commit()
+    old_storage_paths = [
+        path
+        for candidate in candidates
+        if (
+            path := managed_student_photo_storage_path(
+                candidate["previous_photo_path"],
+                candidate["student"].uuid,
+            )
+        )
+    ]
+    _safe_delete_paths(old_storage_paths, context="replaced student photo")
+    _safe_delete_paths(
+        [candidate["temp_storage_path"] for candidate in candidates],
+        context="consumed temp",
+    )
 
     return BulkPhotoCommitResponse(
         manifest_uuid=manifest.uuid,
         total_files=manifest.total_files,
-        uploaded_count=uploaded_count,
-        failed_count=failed_count,
-        unmatched_count=unmatched_count,
-        invalid_count=invalid_count,
+        uploaded_count=len(candidates),
+        failed_count=0,
+        unmatched_count=0,
+        invalid_count=0,
+        duplicate_count=0,
         replacement_count=replacement_count,
-        completed=all_processed,
+        completed=True,
         items=results,
     )
