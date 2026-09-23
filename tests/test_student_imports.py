@@ -18,7 +18,12 @@ from app.api.student_imports import (
     download_student_import_template,
 )
 from app.core.student_import_template import XLSX_CONTENT_TYPE, build_student_import_template
-from app.core.student_imports import parse_student_upload
+from app.core.student_imports import (
+    MAX_IMPORT_CELLS,
+    MAX_IMPORT_COLUMNS,
+    _validate_table,
+    parse_student_upload,
+)
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
@@ -102,6 +107,24 @@ async def test_csv_and_xlsx_uploads_return_headers_and_rows(filename, content):
     assert rows == [
         {"Full Name": "Asha", "Admission No": "101", "DOB": "1899-12-31"}
     ]
+
+
+def test_table_limits_apply_to_csv_and_xlsx_after_parsing():
+    with pytest.raises(HTTPException, match=f"limited to {MAX_IMPORT_COLUMNS} columns") as columns_error:
+        _validate_table(
+            [f"Column {index}" for index in range(MAX_IMPORT_COLUMNS + 1)],
+            [["value"]],
+        )
+    assert columns_error.value.status_code == 413
+
+    column_count = 101
+    row_count = MAX_IMPORT_CELLS // column_count
+    with pytest.raises(HTTPException, match=f"limited to {MAX_IMPORT_CELLS} cells") as cells_error:
+        _validate_table(
+            [f"Column {index}" for index in range(column_count)],
+            [["value", *([""] * (column_count - 1))] for _ in range(row_count)],
+        )
+    assert cells_error.value.status_code == 413
 
 
 def test_mapping_rejects_duplicate_sources_and_targets():

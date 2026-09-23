@@ -39,12 +39,29 @@ def _validate_table(
     normalized_headers = [_cell_text(value) for value in headers]
     if not normalized_headers or not any(normalized_headers):
         raise HTTPException(status_code=422, detail="The spreadsheet has no header row")
+    if len(normalized_headers) > MAX_IMPORT_COLUMNS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Imports are limited to {MAX_IMPORT_COLUMNS} columns",
+        )
     if any(not value for value in normalized_headers):
         raise HTTPException(status_code=422, detail="Every spreadsheet column must have a header")
     if len(normalized_headers) != len(set(normalized_headers)):
         raise HTTPException(status_code=422, detail="Spreadsheet headers must be unique")
     mapped_rows = []
+    total_cells = len(normalized_headers)
     for values in rows:
+        if len(values) > MAX_IMPORT_COLUMNS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Imports are limited to {MAX_IMPORT_COLUMNS} columns",
+            )
+        total_cells += max(len(normalized_headers), len(values))
+        if total_cells > MAX_IMPORT_CELLS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Imports are limited to {MAX_IMPORT_CELLS} cells",
+            )
         row = {
             header: _cell_text(values[index]) if index < len(values) else ""
             for index, header in enumerate(normalized_headers)

@@ -173,7 +173,7 @@ Student history records meaningful field, lifecycle, photo, import, print, and P
 
 ## Bulk import and storage
 
-The student and type-scoped Teacher/Staff Excel workflows provide generated templates, accept uploads, return validation previews, and commit accepted rows atomically only after confirmation. They validate required fields, duplicates, configured custom fields, and student academic relationships where applicable.
+The student and type-scoped Teacher/Staff Excel workflows provide generated templates, accept UTF-8 CSV or XLSX uploads, return validation previews, and commit accepted rows atomically only after confirmation. They validate required fields, duplicates, configured custom fields, and student academic relationships where applicable. Imports are bounded to 5 MB, 5,000 non-empty data rows, 256 columns, and 500,000 parsed cells; XLSX archives are additionally limited to 25 MB expanded data. These limits keep request memory and validation work bounded for the current synchronous API architecture.
 
 Bulk-photo uploads are staged as temporary objects in Supabase Storage. PostgreSQL manifests contain metadata only—never base64 content or raw image bytes. Preview matches staged files to school-scoped students or type-scoped personnel; commit promotes accepted images to managed photo paths and updates records. Failure, expiry, and commit paths clean temporary or replaced objects as appropriate.
 
