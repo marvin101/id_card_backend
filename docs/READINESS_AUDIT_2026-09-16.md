@@ -105,7 +105,7 @@ Canonical baseline security scan completed before fixes: scan ID `b09321cd-ee18-
 8. Run backend pytest/compileall/Alembic heads/diff check; Flutter pub get/analyze/test/diff check. Read-only production command from repository root:
 
 ```powershell
-.venv\Scripts\python.exe scripts/readiness_readonly_smoke.py --backend https://id-card-backend-vcz5.onrender.com --frontend https://idcard-flutter-web.vercel.app --output docs/readiness-smoke-results.json
+.venv\Scripts\python.exe scripts/readiness_readonly_smoke.py --backend https://id-card-backend-vcz5.onrender.com --frontend https://campusid.co.in --output docs/readiness-smoke-results.json
 ```
 
 Record each actual operation/result and unresolved gap before signing release gates. Recommended next phase: implement school/user lifecycle with agreed authority/archive rules, then execute this staging plan. Do not start deferred modules.

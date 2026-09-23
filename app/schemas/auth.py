@@ -6,6 +6,26 @@ from typing import Literal
 
 SchoolRole = Literal["school_admin", "card_operator", "teacher", "staff"]
 
+
+def _normalize_optional_text(value):
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+def _validate_optional_email(value):
+    if value:
+        local, separator, domain = value.rpartition("@")
+        if (
+            not separator
+            or not local
+            or "." not in domain
+            or any(c.isspace() for c in value)
+        ):
+            raise ValueError("Enter a valid email address")
+    return value
+
+
 class SchoolAccessCreate(BaseModel):
     role: SchoolRole
 
@@ -54,18 +74,12 @@ class SelfProfileUpdate(BaseModel):
     @field_validator("username", "full_name", "email", "mobile", mode="before")
     @classmethod
     def normalize_profile_fields(cls, value):
-        if isinstance(value, str):
-            return value.strip() or None
-        return value
+        return _normalize_optional_text(value)
 
     @field_validator("email")
     @classmethod
     def validate_email(cls, value):
-        if value:
-            local, separator, domain = value.rpartition("@")
-            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
-                raise ValueError("Enter a valid email address")
-        return value
+        return _validate_optional_email(value)
 
 
 class ChangePasswordRequest(BaseModel):
@@ -154,18 +168,12 @@ class AdminUserCreate(BaseModel):
     @field_validator("full_name", "email", "mobile", "designation", mode="before")
     @classmethod
     def normalize_contact(cls, value):
-        if isinstance(value, str):
-            return value.strip() or None
-        return value
+        return _normalize_optional_text(value)
 
     @field_validator("email")
     @classmethod
     def validate_email(cls, value):
-        if value:
-            local, separator, domain = value.rpartition("@")
-            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
-                raise ValueError("Enter a valid email address")
-        return value
+        return _validate_optional_email(value)
 
 
 class AdminUserUpdate(BaseModel):
@@ -190,15 +198,9 @@ class AdminUserUpdate(BaseModel):
     @field_validator("full_name", "email", "mobile", "designation", mode="before")
     @classmethod
     def normalize_contact(cls, value):
-        if isinstance(value, str):
-            return value.strip() or None
-        return value
+        return _normalize_optional_text(value)
 
     @field_validator("email")
     @classmethod
     def validate_email(cls, value):
-        if value:
-            local, separator, domain = value.rpartition("@")
-            if not separator or not local or "." not in domain or any(c.isspace() for c in value):
-                raise ValueError("Enter a valid email address")
-        return value
+        return _validate_optional_email(value)

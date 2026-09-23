@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     public_form_max_request_bytes: int = Field(default=7 * 1024 * 1024, ge=1024)
 
     # Public web origin used in revocable student-verification QR links.
-    public_app_url: str = "https://idcard-flutter-web.vercel.app"
+    public_app_url: str = "https://campusid.co.in"
     # A dedicated key is recommended so public credentials can be rotated
     # independently from login sessions. SECRET_KEY remains a safe rollout
     # fallback for existing deployments.

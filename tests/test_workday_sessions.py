@@ -205,6 +205,53 @@ def test_platform_promotion_and_demotion_are_explicit_and_not_self_service(journ
     assert client.get("/users", headers=headers(worker["access_token"])).status_code == 403
 
 
+def test_self_profile_keeps_current_identity_without_duplicate_conflict(journey):
+    client, db, admin, _, _ = journey
+    admin.email = "platform@example.com"
+    db.commit()
+    response = client.patch(
+        "/users/me",
+        json={"username": admin.username, "email": admin.email},
+        headers=headers(login(client)["access_token"]),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["username"] == admin.username
+    assert response.json()["email"] == admin.email
+
+
+def test_admin_can_deactivate_and_demote_admin_when_another_remains(journey):
+    client, db, _, user, _ = journey
+    h = headers(login(client)["access_token"])
+    user.platform_role = "platform_admin"
+    user.is_platform_admin = True
+    db.commit()
+    url = f"/users/{user.uuid}/account"
+
+    deactivated = client.patch(url, json={"is_active": False}, headers=h)
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
+
+    reactivated = client.patch(url, json={"is_active": True}, headers=h)
+    assert reactivated.status_code == 200
+    demoted = client.patch(url, json={"platform_role": None}, headers=h)
+    assert demoted.status_code == 200
+    assert demoted.json()["platform_role"] is None
+    assert demoted.json()["is_platform_admin"] is False
+
+
+@pytest.mark.parametrize("platform_role", ["platform_admin", None])
+def test_regular_user_cannot_change_platform_roles(journey, platform_role):
+    client, _, admin, _, _ = journey
+    response = client.patch(
+        f"/users/{admin.uuid}/account",
+        json={"platform_role": platform_role},
+        headers=headers(login(client, "worker")["access_token"]),
+    )
+
+    assert response.status_code == 403
+
+
 def test_sensitive_validation_errors_and_public_failures_are_not_cached(journey):
     client, _, _, _, _ = journey
     secret = "sensitive-token" * 400
