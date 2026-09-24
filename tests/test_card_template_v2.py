@@ -468,6 +468,15 @@ def test_flutter_school_profile_bindings_are_accepted(field):
     assert payload.design["elements"][0]["data"]["field"] == field
 
 
+def test_combined_class_section_binding_is_accepted():
+    document = _document()
+    document["elements"][0]["data"]["field"] = "class_section"
+
+    payload = CardTemplateUpdate(name="Card", design=document)
+
+    assert payload.design["elements"][0]["data"]["field"] == "class_section"
+
+
 def test_unknown_system_binding_is_rejected():
     document = _document()
     document["elements"][0]["data"]["field"] = "password_hash"

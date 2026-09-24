@@ -40,6 +40,7 @@ SUPPORTED_BINDING_FIELDS = {
     "session",
     "class",
     "section",
+    "class_section",
     "school_name",
     "school_address",
     "school_code",
