@@ -655,6 +655,34 @@ class CardTemplateUpdate(BaseModel):
         return value
 
 
+class CardTemplateCopyRequest(BaseModel):
+    source_school_uuid: UUID
+    expected_updated_at: datetime | None = None
+
+    @field_validator("expected_updated_at")
+    @classmethod
+    def validate_expected_updated_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("expected_updated_at must include a timezone")
+        return value
+
+
+class UnresolvedCustomFieldBinding(BaseModel):
+    field_uuid: UUID
+    field_key: str | None = None
+    label: str | None = None
+    entity_type: str | None = None
+    data_type: str | None = None
+    reason: str
+    locations: list[str]
+
+
+class CardTemplateCopyError(BaseModel):
+    code: str = "unmapped_custom_fields"
+    message: str
+    unresolved_fields: list[UnresolvedCustomFieldBinding]
+
+
 class CardTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
