@@ -257,7 +257,7 @@ def update_academic_session(
         and new_end_date < new_start_date
     ):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="end_date cannot be earlier than start_date",
         )
 

@@ -119,7 +119,7 @@ async def create_student(
         student_data = StudentCreate.model_validate_json(student_data_json)
     except Exception as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Invalid student data.",
         ) from exc
 
@@ -332,7 +332,7 @@ async def upload_student_photo(
 
     if not content:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Uploaded photo is empty.",
         )
 
@@ -350,7 +350,7 @@ async def upload_student_photo(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
     except StorageError as exc:
@@ -729,7 +729,7 @@ def list_students_paged(
 
     if created_from and created_to and created_from > created_to:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="created_from cannot be after created_to",
         )
 
@@ -945,7 +945,7 @@ def update_student_verification(
     note = payload.note.strip() if payload.note else None
     if payload.status == VerificationStatus.NEEDS_CORRECTION and not note:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A correction note is required when marking Needs Correction",
         )
 
@@ -1219,7 +1219,7 @@ def update_student(
     if "custom_fields" in fields_set:
         if student_data.custom_fields is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="custom_fields cannot be null",
             )
         validated_custom_fields = validate_student_custom_fields(
@@ -1244,7 +1244,7 @@ def update_student(
     if "session_uuid" in fields_set:
         if student_data.session_uuid is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="session_uuid cannot be null",
             )
 
@@ -1270,7 +1270,7 @@ def update_student(
     if "class_uuid" in fields_set:
         if student_data.class_uuid is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="class_uuid cannot be null",
             )
 
@@ -1296,7 +1296,7 @@ def update_student(
     if "section_uuid" in fields_set:
         if student_data.section_uuid is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="section_uuid cannot be null",
             )
 
@@ -1372,7 +1372,7 @@ def update_student(
     if "admission_no" in fields_set:
         if student_data.admission_no is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="admission_no cannot be null",
             )
 
@@ -1405,7 +1405,7 @@ def update_student(
     if "full_name" in fields_set:
         if student_data.full_name is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="full_name cannot be null",
             )
 

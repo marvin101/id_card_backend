@@ -414,7 +414,7 @@ async def upload_bulk_student_photos(
         "application/octet-stream",
     }:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Please upload a ZIP archive.",
         )
 
@@ -429,7 +429,7 @@ async def upload_bulk_student_photos(
 
     except BulkPhotoValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -599,7 +599,7 @@ def commit_bulk_student_photos(
 ):
     if not payload.confirmed:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Explicit confirmation is required.",
         )
 
