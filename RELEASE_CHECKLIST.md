@@ -14,6 +14,8 @@ Record the release owner, candidate Git commit IDs, migration revision, verifica
 
 - [ ] `app/version.py`, FastAPI OpenAPI metadata, both changelogs, and Flutter package metadata identify the candidate as `0.10.0` / `0.10.0+10`.
 - [ ] GitHub Backend CI passes for the release candidate.
+- [ ] `python scripts/verify_release.py` passes; the release tag is exactly `v<app/version.py>` and the `[Unreleased]` changelog section is empty before tagging.
+- [ ] `python -m pip_audit -r requirements.txt` reports no known runtime dependency vulnerabilities.
 - [ ] `python -m pytest` passes.
 - [ ] `python -m compileall app` passes.
 - [ ] `python -m alembic heads` shows the reviewed intended single head; the deployed/current revision and target head have been compared.

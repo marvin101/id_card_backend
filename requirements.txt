@@ -28,6 +28,6 @@ typing-inspection==0.4.2
 typing_extensions==4.16.0
 tzdata==2026.3
 uvicorn==0.52.1
-python-multipart
-Pillow
+python-multipart==0.0.32
+Pillow==12.3.0
 supabase==2.31.0

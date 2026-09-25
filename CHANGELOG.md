@@ -25,6 +25,7 @@ Versions before 0.7.0 below are a reconstructed milestone history from repositor
 
 ### Changed
 
+- Hardened release CI with immutable GitHub Action revisions, duplicate-run cancellation, exact direct dependency pins, blocking dependency consistency and vulnerability checks, automated release/tag validation, and Dependabot coverage for Python and Actions dependencies.
 - Reduced backend import work with lazy Supabase Storage SDK/client initialization for more reliable Render startup.
 - Replaced the unbounded Flutter student-directory load with 100-record server paging, debounced search, and stale-response rejection.
 - Cached type-scoped custom-field definitions during student import validation to avoid repeated lookups.
