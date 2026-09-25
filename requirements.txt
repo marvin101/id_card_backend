@@ -23,7 +23,7 @@ pydantic_core==2.46.5
 PyJWT==2.13.0
 python-dotenv==1.2.3
 SQLAlchemy==2.0.54
-starlette==1.4.1
+starlette==1.6.0
 typing-inspection==0.4.2
 typing_extensions==4.16.0
 tzdata==2026.3
