@@ -18,6 +18,7 @@ from app.api.public_forms import (
     _public_fields,
     management_router,
     public_router,
+    approve_public_form_submission,
     get_public_form,
     submit_public_form,
 )
@@ -29,6 +30,9 @@ from app.schemas.public_form import PublicFormConfigWrite, PublicStudentInput
 from app.models.student import Student
 from app.models.student_audit_event import StudentAuditEvent
 from app.models.public_form import PublicFormSubmission
+from app.models.academic_session import AcademicSession
+from app.models.school_class import SchoolClass
+from app.models.section import Section
 
 
 REQUIRED = ["session_uuid", "class_uuid", "section_uuid", "admission_no", "full_name"]
@@ -241,6 +245,62 @@ def test_public_submission_defers_duplicate_conflict_until_approval(monkeypatch)
     monkeypatch.setattr("app.api.public_forms.enforce_public_form_rate_limit", lambda *args, **kwargs: None)
     response = asyncio.run(submit_public_form("token", _request(), payload_json, None, db))
     assert response.submitted is True
+
+
+def test_public_form_approval_checks_roll_in_selected_section(monkeypatch):
+    school = _school()
+    session = AcademicSession(id=11, uuid=uuid4(), school_id=school.id, name="2026-27")
+    school_class = SchoolClass(id=12, uuid=uuid4(), school_id=school.id, name="10")
+    section = Section(id=13, uuid=uuid4(), class_id=school_class.id, name="A")
+    submission = SimpleNamespace(
+        status="pending",
+        payload={
+            "session_uuid": session.uuid,
+            "class_uuid": school_class.uuid,
+            "section_uuid": section.uuid,
+            "admission_no": "A-100",
+            "roll_no": "12",
+            "full_name": "Public Student",
+            "custom_fields": [],
+        },
+    )
+    duplicate = SimpleNamespace(id=99)
+    db = _Database([session], [school_class], [section], [], [duplicate])
+    captured = {}
+
+    monkeypatch.setattr("app.api.public_forms._manager", lambda *_: school)
+    monkeypatch.setattr("app.api.public_forms._managed_submission", lambda *_args, **_kwargs: submission)
+    monkeypatch.setattr("app.api.public_forms.effective_student_field_map", lambda *_: {})
+    monkeypatch.setattr("app.api.public_forms.reject_disabled_student_fields", lambda *_: None)
+    monkeypatch.setattr("app.api.public_forms.validate_required_student_fields", lambda *_: None)
+    monkeypatch.setattr("app.api.public_forms.validate_student_custom_fields", lambda *_args, **_kwargs: [])
+
+    from app.api import public_forms
+    real_query = public_forms.student_roll_conflict_query
+
+    def capture_query(**kwargs):
+        captured.update(kwargs)
+        return real_query(**kwargs)
+
+    monkeypatch.setattr(public_forms, "student_roll_conflict_query", capture_query)
+
+    with pytest.raises(HTTPException) as raised:
+        approve_public_form_submission(
+            school.uuid,
+            uuid4(),
+            db=db,
+            current_user=_user("school_admin"),
+        )
+
+    assert raised.value.status_code == 409
+    assert "this section" in raised.value.detail
+    assert captured == {
+        "school_id": school.id,
+        "session_id": session.id,
+        "class_id": school_class.id,
+        "section_id": section.id,
+        "roll_no": "12",
+    }
 
 
 def test_public_submission_rejects_photo_when_disabled(monkeypatch):

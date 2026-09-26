@@ -34,6 +34,7 @@ from app.core.student_field_config import (
     reject_disabled_student_fields,
     validate_required_student_fields,
 )
+from app.core.student_rolls import student_roll_conflict_query
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.public_form import PublicForm, PublicFormSubmission
@@ -434,8 +435,14 @@ def approve_public_form_submission(school_uuid: UUID, submission_uuid: UUID, db:
         raise HTTPException(status_code=409, detail="Section is no longer available")
     if db.execute(select(Student).where(Student.school_id == school.id, Student.admission_no == payload.admission_no)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Admission number already exists in this school")
-    if payload.roll_no and db.execute(select(Student).where(Student.school_id == school.id, Student.session_id == session.id, Student.class_id == school_class.id, Student.roll_no == payload.roll_no)).scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="Roll number already exists for this class in this academic session")
+    if payload.roll_no is not None and db.execute(student_roll_conflict_query(
+        school_id=school.id,
+        session_id=session.id,
+        class_id=school_class.id,
+        section_id=section.id,
+        roll_no=payload.roll_no,
+    )).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Roll number already exists in this section for this academic session")
     student = Student(
         school_id=school.id, session_id=session.id, class_id=school_class.id, section_id=section.id,
         admission_no=payload.admission_no, roll_no=payload.roll_no, stream=payload.stream,

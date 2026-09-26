@@ -390,6 +390,65 @@ def test_admission_and_roll_duplicates_are_prevalidated(access):
     assert db.commits == 0
 
 
+def test_same_roll_in_different_sections_is_allowed_by_grid(access):
+    session, school_class, section_a = _academic()
+    section_b = Section(id=32, uuid=uuid4(), name="B", class_id=school_class.id)
+    student = _student(session, school_class, section_a, admission="A-1", roll="12")
+    existing = _student(session, school_class, section_b, admission="B-1", roll="12")
+    existing.id = 42
+    existing.uuid = uuid4()
+    db = _Db(
+        _Result([student]), _Result([session]), _Result([school_class]),
+        _Result([section_a, section_b]), _Result([]), _Result([]),
+        _Result([student, existing]), _Result([student]),
+    )
+
+    result = _call(access, db, _patch(student, full_name="Updated Student"))
+
+    assert result.updated_count == 1
+    assert db.commits == 1
+
+
+def test_grid_rejects_move_into_section_with_duplicate_roll(access):
+    session, school_class, section_a = _academic()
+    section_b = Section(id=32, uuid=uuid4(), name="B", class_id=school_class.id)
+    student = _student(session, school_class, section_a, admission="A-1", roll="12")
+    existing = _student(session, school_class, section_b, admission="B-1", roll="12")
+    existing.id = 42
+    existing.uuid = uuid4()
+    db = _Db(
+        _Result([student]), _Result([session]), _Result([school_class]),
+        _Result([section_a, section_b]), _Result([]), _Result([]),
+        _Result([student, existing]),
+    )
+
+    response = _call(access, db, _patch(student, section_uuid=str(section_b.uuid)))
+
+    assert response.status_code == 422
+    assert b"this section" in response.body
+    assert db.commits == 0
+
+
+def test_grid_allows_move_to_section_when_roll_is_free(access):
+    session, school_class, section_a = _academic()
+    section_b = Section(id=32, uuid=uuid4(), name="B", class_id=school_class.id)
+    student = _student(session, school_class, section_a, admission="A-1", roll="12")
+    existing = _student(session, school_class, section_b, admission="B-1", roll="13")
+    existing.id = 42
+    existing.uuid = uuid4()
+    db = _Db(
+        _Result([student]), _Result([session]), _Result([school_class]),
+        _Result([section_a, section_b]), _Result([]), _Result([]),
+        _Result([student, existing]), _Result([student]),
+    )
+
+    result = _call(access, db, _patch(student, section_uuid=str(section_b.uuid)))
+
+    assert result.updated_count == 1
+    assert student.section_id == section_b.id
+    assert db.commits == 1
+
+
 def test_custom_number_validation_and_inactive_field_rejection_are_structured(access):
     session, school_class, section = _academic()
     student = _student(session, school_class, section)

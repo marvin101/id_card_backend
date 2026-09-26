@@ -46,6 +46,7 @@ from app.core.school_access import (
 )
 from app.core.security import get_current_user
 from app.core.public_credentials import initialize_public_credential
+from app.core.student_rolls import student_roll_conflict_query
 from app.models.academic_session import AcademicSession
 from app.models.school_class import SchoolClass
 from app.models.section import Section
@@ -221,18 +222,19 @@ async def create_student(
 
     if student_data.roll_no is not None:
         existing_roll = db.execute(
-            select(Student).where(
-                Student.school_id == school.id,
-                Student.session_id == session.id,
-                Student.class_id == school_class.id,
-                Student.roll_no == student_data.roll_no,
+            student_roll_conflict_query(
+                school_id=school.id,
+                session_id=session.id,
+                class_id=school_class.id,
+                section_id=section.id,
+                roll_no=student_data.roll_no,
             )
         ).scalar_one_or_none()
 
         if existing_roll is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Roll number already exists for this class in this academic session",
+                detail="Roll number already exists in this section for this academic session",
             )
 
     # ------------------------------------------------------
@@ -1347,12 +1349,13 @@ def update_student(
 
     if target_roll_no is not None:
         existing_roll = db.execute(
-            select(Student).where(
-                Student.school_id == school.id,
-                Student.session_id == target_session_id,
-                Student.class_id == target_class_id,
-                Student.roll_no == target_roll_no,
-                Student.id != student.id,
+            student_roll_conflict_query(
+                school_id=school.id,
+                session_id=target_session_id,
+                class_id=target_class_id,
+                section_id=target_section_id,
+                roll_no=target_roll_no,
+                exclude_student_id=student.id,
             )
         ).scalar_one_or_none()
 
@@ -1360,8 +1363,8 @@ def update_student(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
-                    "Roll number already exists for this class "
-                    "in this academic session"
+                    "Roll number already exists in this section "
+                    "for this academic session"
                 ),
             )
 

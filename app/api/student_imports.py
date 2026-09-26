@@ -22,6 +22,7 @@ from app.core.student_import_template import (
 )
 from app.core.student_audit import record_student_audit
 from app.core.student_field_config import effective_student_fields
+from app.core.student_rolls import student_roll_key
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition
 from app.models.school_class import SchoolClass
@@ -194,12 +195,22 @@ def _validate_import(
         section_lookup[key] = section
 
     existing_rows = db.execute(
-        select(Student.admission_no, Student.session_id, Student.class_id, Student.roll_no).where(Student.school_id == school_id)
+        select(
+            Student.admission_no,
+            Student.session_id,
+            Student.class_id,
+            Student.section_id,
+            Student.roll_no,
+        ).where(Student.school_id == school_id)
     ).all()
     existing_admissions = {row[0] for row in existing_rows}
-    existing_rolls = {(row[1], row[2], row[3]) for row in existing_rows if row[3] is not None}
+    existing_rolls = {
+        student_roll_key(row[1], row[2], row[3], row[4])
+        for row in existing_rows
+        if row[4] is not None
+    }
     seen_admissions: set[str] = set()
-    seen_rolls: set[tuple[int, int, str]] = set()
+    seen_rolls: set[tuple[int, int, int, str]] = set()
     validated_rows = []
     duplicate_rows = 0
 
@@ -231,13 +242,13 @@ def _validate_import(
             seen_admissions.add(admission_no)
 
         roll_no = values.get("roll_no") or None
-        if roll_no and session and school_class:
-            roll_key = (session.id, school_class.id, roll_no)
+        if roll_no and session and school_class and section:
+            roll_key = student_roll_key(session.id, school_class.id, section.id, roll_no)
             if roll_key in seen_rolls:
-                errors.append("Duplicate roll number within upload for session and class")
+                errors.append("Duplicate roll number within upload for session, class and section")
                 row_is_duplicate = True
             elif roll_key in existing_rolls:
-                errors.append("Roll number already exists for this class in this academic session")
+                errors.append("Roll number already exists in this section for this academic session")
                 row_is_duplicate = True
             seen_rolls.add(roll_key)
         if row_is_duplicate:

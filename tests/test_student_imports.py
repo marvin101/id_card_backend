@@ -298,6 +298,56 @@ def test_preview_detects_duplicate_upload_rows_without_student_writes():
     assert db.added == []
 
 
+def _roll_import_mapping():
+    return StudentImportMapping(
+        mappings=[
+            StudentImportMappingItem(source_column="Session", target_field="academic_session"),
+            StudentImportMappingItem(source_column="Class", target_field="class"),
+            StudentImportMappingItem(source_column="Section", target_field="section"),
+            StudentImportMappingItem(source_column="Admission", target_field="admission_no"),
+            StudentImportMappingItem(source_column="Roll", target_field="roll_no"),
+            StudentImportMappingItem(source_column="Name", target_field="full_name"),
+        ]
+    )
+
+
+def _roll_import_preview(rows):
+    session = AcademicSession(id=1, uuid=uuid4(), school_id=10, name="2026-27")
+    school_class = SchoolClass(id=2, uuid=uuid4(), school_id=10, name="Grade 1")
+    sections = [
+        Section(id=3, uuid=uuid4(), class_id=2, name="A"),
+        Section(id=4, uuid=uuid4(), class_id=2, name="B"),
+    ]
+    db = _Database([], [session], [school_class], sections, [], [])
+    manifest = {
+        "headers": ["Session", "Class", "Section", "Admission", "Roll", "Name"],
+        "rows": rows,
+    }
+    return _validate_import(db, 10, uuid4(), manifest, _roll_import_mapping())[0]
+
+
+def test_import_allows_same_roll_number_in_different_sections():
+    preview = _roll_import_preview([
+        {"Session": "2026-27", "Class": "Grade 1", "Section": "A", "Admission": "A-1", "Roll": "12", "Name": "Asha"},
+        {"Session": "2026-27", "Class": "Grade 1", "Section": "B", "Admission": "B-1", "Roll": "12", "Name": "Bina"},
+    ])
+
+    assert preview.valid_rows == 2
+    assert preview.duplicate_rows == 0
+    assert preview.can_import is True
+
+
+def test_import_rejects_same_roll_number_twice_in_one_section():
+    preview = _roll_import_preview([
+        {"Session": "2026-27", "Class": "Grade 1", "Section": "A", "Admission": "A-1", "Roll": "12", "Name": "Asha"},
+        {"Session": "2026-27", "Class": "Grade 1", "Section": "A", "Admission": "A-2", "Roll": "12", "Name": "Arun"},
+    ])
+
+    assert preview.valid_rows == 1
+    assert preview.duplicate_rows == 1
+    assert "session, class and section" in preview.rows[1].errors[0]
+
+
 def test_missing_required_mapping_is_rejected_before_row_processing():
     db = _Database([])
     with pytest.raises(HTTPException, match="Required target is not mapped"):

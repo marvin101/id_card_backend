@@ -72,14 +72,14 @@ class Student(Base):
             name="uq_student_admission_school",
         ),
 
-        # Roll number is unique within a school,
-        # academic session and class.
+        # Roll number is unique within a section for an academic session.
         UniqueConstraint(
             "school_id",
             "session_id",
             "class_id",
+            "section_id",
             "roll_no",
-            name="uq_student_roll_school_session_class",
+            name="uq_student_roll_school_session_class_section",
         ),
 
         ForeignKeyConstraint(

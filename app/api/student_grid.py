@@ -16,6 +16,7 @@ from app.core.school_access import get_active_school, require_card_data_access
 from app.core.security import get_current_user
 from app.core.student_audit import custom_field_change_set, record_student_field_changes
 from app.core.student_field_config import effective_student_field_map, effective_student_fields
+from app.core.student_rolls import student_roll_key
 from app.models.academic_session import AcademicSession
 from app.models.custom_field import CustomFieldDefinition, StudentCustomFieldValue
 from app.models.school_class import SchoolClass
@@ -408,17 +409,18 @@ def patch_student_grid(
     all_students = db.execute(select(Student).where(Student.school_id == school.id)).scalars().all()
     plan_by_id = {plan["student"].id: plan for plan in plans}
     admissions: dict[str, list[tuple[Student, bool]]] = {}
-    rolls: dict[tuple[int, int, str], list[tuple[Student, bool]]] = {}
+    rolls: dict[tuple[int, int, int, str], list[tuple[Student, bool]]] = {}
     for item in all_students:
         plan = plan_by_id.get(item.id)
         values = plan["values"] if plan is not None else None
         admission = values["admission_no"] if values is not None else item.admission_no
         session_id = session_by_uuid[values["session_uuid"]].id if values is not None else item.session_id
         class_id = class_by_uuid[values["class_uuid"]].id if values is not None else item.class_id
+        section_id = section_by_uuid[values["section_uuid"]].id if values is not None else item.section_id
         roll = values["roll_no"] if values is not None else item.roll_no
         admissions.setdefault(admission, []).append((item, plan is not None))
         if roll is not None:
-            key = (session_id, class_id, roll)
+            key = student_roll_key(session_id, class_id, section_id, roll)
             rolls.setdefault(key, []).append((item, plan is not None))
     for duplicates in admissions.values():
         if len(duplicates) > 1:
@@ -429,7 +431,7 @@ def patch_student_grid(
         if len(duplicates) > 1:
             for item, is_patched in duplicates:
                 if is_patched:
-                    errors.append(_error(item.uuid, "roll_no", "Roll number already exists for this class in this academic session"))
+                    errors.append(_error(item.uuid, "roll_no", "Roll number already exists in this section for this academic session"))
     if errors:
         return _error_response(errors)
 
