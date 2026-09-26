@@ -4,13 +4,18 @@ import secrets
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.file_storage import get_storage_public_url
+from app.core.file_storage import (
+    MAX_SCHOOL_LOGO_SIZE,
+    StorageError,
+    get_storage_public_url,
+    save_card_background,
+)
 from app.core.rate_limit import enforce_public_design_rate_limit
 from app.core.school_access import get_active_school, require_school_access, require_school_admin
 from app.core.security import get_current_user
@@ -185,6 +190,41 @@ def _custom_field_copy_mapping(
                 )
             )
     return replacements, unresolved
+
+
+@router.post("/background-image")
+async def upload_card_background_image(
+    school_uuid: UUID,
+    background: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(
+        db,
+        current_user,
+        school.id,
+        "Only a platform or school administrator can update the card background",
+    )
+    content = await background.read(MAX_SCHOOL_LOGO_SIZE + 1)
+    try:
+        storage_path = save_card_background(
+            school.uuid,
+            content,
+            background.content_type,
+            background.filename,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except StorageError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Card background storage is currently unavailable.",
+        ) from exc
+    return {"background_image": get_storage_public_url(storage_path)}
 
 
 @router.get("", response_model=CardTemplateResponse)
