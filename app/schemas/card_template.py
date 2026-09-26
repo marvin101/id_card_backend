@@ -213,6 +213,31 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
     background_image = canvas.get("background_image")
     if background_image is not None and not isinstance(background_image, str):
         raise ValueError("canvas.background_image must be a string or null")
+    background_opacity = canvas.get("background_opacity", 1)
+    if (
+        isinstance(background_opacity, bool)
+        or not isinstance(background_opacity, (int, float))
+        or not math.isfinite(float(background_opacity))
+        or not 0 <= float(background_opacity) <= 1
+    ):
+        raise ValueError("canvas.background_opacity must be between 0 and 1")
+    background_scale = canvas.get("background_scale", 1)
+    if (
+        isinstance(background_scale, bool)
+        or not isinstance(background_scale, (int, float))
+        or not math.isfinite(float(background_scale))
+        or not 1 <= float(background_scale) <= 5
+    ):
+        raise ValueError("canvas.background_scale must be between 1 and 5")
+    for key in ("background_offset_x", "background_offset_y"):
+        value = canvas.get(key, 0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or abs(float(value)) > 500
+        ):
+            raise ValueError(f"canvas.{key} must be a finite number between -500 and 500")
 
     elements = design.get("elements")
     if not isinstance(elements, list) or len(elements) > 250:
