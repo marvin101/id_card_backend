@@ -681,7 +681,7 @@ def test_new_designer_elements_reject_malformed_contract(element_type, style, da
 
 
 def test_v2_canvas_accepts_background_transform_properties():
-    design = _valid_design()
+    design = _document()
     design["canvas"].update({
         "background_image": "https://example.test/background.png",
         "background_opacity": 0.45,
@@ -704,7 +704,7 @@ def test_v2_canvas_accepts_background_transform_properties():
     ],
 )
 def test_v2_canvas_rejects_invalid_background_transform_properties(field, value):
-    design = _valid_design()
+    design = _document()
     design["canvas"][field] = value
     with pytest.raises(ValueError, match=field):
         validate_design_document(design)
