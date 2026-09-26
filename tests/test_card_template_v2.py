@@ -678,3 +678,33 @@ def test_new_designer_elements_reject_malformed_contract(element_type, style, da
     document["elements"][0].update(type=element_type, style=style, data=data)
     with pytest.raises(ValidationError, match=message):
         CardTemplateUpdate(name="Invalid", design=document)
+
+
+def test_v2_canvas_accepts_background_transform_properties():
+    design = _valid_design()
+    design["canvas"].update({
+        "background_image": "https://example.test/background.png",
+        "background_opacity": 0.45,
+        "background_scale": 1.75,
+        "background_offset_x": 4.5,
+        "background_offset_y": -3.0,
+    })
+    assert validate_design_document(design) == design
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("background_opacity", -0.1),
+        ("background_opacity", 1.1),
+        ("background_scale", 0.9),
+        ("background_scale", 5.1),
+        ("background_offset_x", float("inf")),
+        ("background_offset_y", 501),
+    ],
+)
+def test_v2_canvas_rejects_invalid_background_transform_properties(field, value):
+    design = _valid_design()
+    design["canvas"][field] = value
+    with pytest.raises(ValueError, match=field):
+        validate_design_document(design)
