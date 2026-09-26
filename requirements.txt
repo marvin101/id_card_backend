@@ -14,7 +14,7 @@ idna==3.18
 Mako==1.4.1
 MarkupSafe==3.0.3
 psycopg==3.3.4
-psycopg-binary==3.3.4
+psycopg-binary==3.3.6
 pwdlib==0.3.0
 pycparser==3.0
 pydantic==2.13.5
