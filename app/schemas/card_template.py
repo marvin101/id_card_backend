@@ -244,6 +244,7 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("elements must be a list containing at most 250 items")
     identifiers: set[str] = set()
     z_indices: set[int] = set()
+    anchors: dict[str, str] = {}
     for index, element in enumerate(elements):
         prefix = f"elements[{index}]"
         if not isinstance(element, dict):
@@ -259,6 +260,13 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
         if identifier in identifiers:
             raise ValueError("element IDs must be unique")
         identifiers.add(identifier)
+        anchor_parent_id = element.get("anchor_parent_id")
+        if anchor_parent_id is not None:
+            if not isinstance(anchor_parent_id, str) or not anchor_parent_id.strip():
+                raise ValueError(f"{prefix}.anchor_parent_id must be a non-empty string")
+            if anchor_parent_id == identifier:
+                raise ValueError(f"{prefix} cannot anchor to itself")
+            anchors[identifier] = anchor_parent_id
         element_type = element.get("type")
         if element_type not in SUPPORTED_ELEMENT_TYPES:
             raise ValueError(f"{prefix}.type is unsupported")
@@ -619,6 +627,19 @@ def validate_design_document(design: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "settings.grid_size must be greater than 0 and at most 200"
         )
+    for child_id, parent_id in anchors.items():
+        if parent_id not in identifiers:
+            raise ValueError(f"anchor parent {parent_id!r} does not exist")
+        visited = {child_id}
+        current = parent_id
+        while current in anchors:
+            if current in visited:
+                raise ValueError("anchor relationships must not contain a cycle")
+            visited.add(current)
+            current = anchors[current]
+        if current in visited:
+            raise ValueError("anchor relationships must not contain a cycle")
+
     return design
 
 

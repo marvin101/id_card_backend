@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.models.student import Student
 from app.core.database import get_db
@@ -16,6 +16,7 @@ from app.models.users import User
 from app.schemas.school_class import (
     SchoolClassCreate,
     SchoolClassResponse,
+    SchoolClassReorder,
     SchoolClassUpdate,
 )
 
@@ -70,9 +71,15 @@ def create_class(
     # Create class
     # ------------------------------------------------------
 
+    next_order = db.execute(
+        select(func.coalesce(func.max(SchoolClass.sort_order), -1) + 1).where(
+            SchoolClass.school_id == school.id,
+        )
+    ).scalar_one()
     school_class = SchoolClass(
         school_id=school.id,
         name=class_data.name,
+        sort_order=next_order,
     )
 
     db.add(school_class)
@@ -109,10 +116,44 @@ def list_classes(
     result = db.execute(
         select(SchoolClass)
         .where(SchoolClass.school_id == school.id)
-        .order_by(SchoolClass.name)
+        .order_by(SchoolClass.sort_order, SchoolClass.id)
     )
 
     return result.scalars().all()
+
+
+@router.put("/order", response_model=list[SchoolClassResponse])
+def reorder_classes(
+    school_uuid: UUID,
+    payload: SchoolClassReorder,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    school = get_active_school(db, school_uuid)
+    require_school_admin(
+        db, current_user, school.id,
+        "Only a school administrator can reorder classes",
+    )
+    if len(payload.class_uuids) != len(set(payload.class_uuids)):
+        raise HTTPException(status_code=422, detail="Class order contains duplicates")
+    classes = db.execute(
+        select(SchoolClass)
+        .where(SchoolClass.school_id == school.id)
+        .with_for_update()
+    ).scalars().all()
+    by_uuid = {item.uuid: item for item in classes}
+    if set(payload.class_uuids) != set(by_uuid):
+        raise HTTPException(
+            status_code=422,
+            detail="Class order must contain every class in this school exactly once",
+        )
+    ordered = []
+    for index, class_uuid in enumerate(payload.class_uuids):
+        item = by_uuid[class_uuid]
+        item.sort_order = index
+        ordered.append(item)
+    db.commit()
+    return ordered
 
 
 # ==========================================================

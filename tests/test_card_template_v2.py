@@ -51,6 +51,26 @@ def _document():
     }
 
 
+def test_anchor_metadata_is_optional_and_cycle_safe():
+    document = _document()
+    validate_design_document(document)
+    document["elements"][1]["anchor_parent_id"] = "student-name"
+    validate_design_document(document)
+    document["elements"][0]["anchor_parent_id"] = "house"
+    with pytest.raises(ValueError, match="cycle"):
+        validate_design_document(document)
+
+
+def test_anchor_parent_must_exist_and_cannot_be_self():
+    document = _document()
+    document["elements"][0]["anchor_parent_id"] = "missing"
+    with pytest.raises(ValueError, match="does not exist"):
+        validate_design_document(document)
+    document["elements"][0]["anchor_parent_id"] = "student-name"
+    with pytest.raises(ValueError, match="itself"):
+        validate_design_document(document)
+
+
 def _qr_element(data=None, style=None):
     return {
         "id": "student-qr",

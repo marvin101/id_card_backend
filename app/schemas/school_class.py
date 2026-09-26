@@ -12,6 +12,11 @@ class SchoolClassResponse(BaseModel):
 
     uuid: UUID
     name: str
+    sort_order: int
 
 class SchoolClassUpdate(BaseModel):
     name: str | None = None
+
+
+class SchoolClassReorder(BaseModel):
+    class_uuids: list[UUID]

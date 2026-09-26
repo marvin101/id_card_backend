@@ -92,6 +92,12 @@ class SchoolClass(Base):
         nullable=False,
     )
 
+    sort_order: Mapped[int] = mapped_column(
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+
     # ==========================================================
     # Timestamps
     # ==========================================================

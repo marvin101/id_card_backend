@@ -157,7 +157,9 @@ def test_individual_create_checks_the_selected_section(monkeypatch):
         ))
 
     assert raised.value.status_code == 409
-    assert "this section" in raised.value.detail
+    assert raised.value.detail["type"] == "duplicate_student"
+    assert raised.value.detail["fields"] == ["roll_no"]
+    assert "this section" in raised.value.detail["message"]
     assert captured["section_id"] == section.id
 
 
@@ -189,7 +191,9 @@ def test_individual_update_uses_complete_destination_state(
                 current_user=SimpleNamespace(id=1),
             )
         assert raised.value.status_code == expected_status
-        assert "this section" in raised.value.detail
+        assert raised.value.detail["type"] == "duplicate_student"
+        assert raised.value.detail["fields"] == ["roll_no"]
+        assert "this section" in raised.value.detail["message"]
         assert db.commits == 0
     else:
         result = students_api.update_student(

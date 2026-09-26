@@ -15,6 +15,7 @@ from fastapi import (
     status,
 )
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.database import get_db
@@ -70,6 +71,17 @@ router = APIRouter(
     prefix="/schools/{school_uuid}/students",
     tags=["Students"],
 )
+
+
+def _duplicate_student_conflict(*fields: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "type": "duplicate_student",
+            "fields": list(fields),
+            "message": message,
+        },
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -211,9 +223,8 @@ async def create_student(
     ).scalar_one_or_none()
 
     if existing_student is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Admission number already exists in this school",
+        raise _duplicate_student_conflict(
+            "admission_no", message="Admission number already exists in this school"
         )
 
     # ------------------------------------------------------
@@ -232,9 +243,9 @@ async def create_student(
         ).scalar_one_or_none()
 
         if existing_roll is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Roll number already exists in this section for this academic session",
+            raise _duplicate_student_conflict(
+                "roll_no",
+                message="Roll number already exists in this section for this academic session",
             )
 
     # ------------------------------------------------------
@@ -266,7 +277,25 @@ async def create_student(
 
     db.add(student)
     replace_student_custom_fields(db, student, validated_custom_fields)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        constraint = str(getattr(exc, "orig", exc))
+        if "uq_student_admission_school" in constraint:
+            raise _duplicate_student_conflict(
+                "admission_no",
+                message="Admission number already exists in this school",
+            ) from exc
+        if "uq_student_roll_school_session_class_section" in constraint:
+            raise _duplicate_student_conflict(
+                "roll_no",
+                message=(
+                    "Roll number already exists in this section "
+                    "for this academic session"
+                ),
+            ) from exc
+        raise
     record_student_audit(
         db,
         student=student,
@@ -1360,12 +1389,9 @@ def update_student(
         ).scalar_one_or_none()
 
         if existing_roll is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "Roll number already exists in this section "
-                    "for this academic session"
-                ),
+            raise _duplicate_student_conflict(
+                "roll_no",
+                message="Roll number already exists in this section for this academic session",
             )
 
     # ------------------------------------------------------
@@ -1388,9 +1414,8 @@ def update_student(
         ).scalar_one_or_none()
 
         if existing_student is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Admission number already exists in this school",
+            raise _duplicate_student_conflict(
+                "admission_no", message="Admission number already exists in this school"
             )
 
         student.admission_no = student_data.admission_no
