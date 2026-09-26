@@ -416,6 +416,33 @@ def managed_personnel_photo_storage_path(
     return candidate
 
 
+def save_card_background(
+    school_uuid: UUID,
+    content: bytes,
+    content_type: str | None,
+    filename: str | None,
+) -> str:
+    try:
+        extension = validate_school_logo(content, content_type, filename)
+    except ValueError as exc:
+        raise ValueError(
+            str(exc)
+            .replace("School logo", "Card background")
+            .replace("school logo", "card background")
+            .replace("logo", "background")
+        ) from exc
+    storage_path = f"schools/{school_uuid}/card-backgrounds/{uuid4().hex}{extension}"
+    try:
+        get_supabase_client().storage.from_(SUPABASE_BUCKET).upload(
+            path=storage_path,
+            file=content,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+    except Exception as exc:
+        raise StorageError(f"Failed to upload card background: {exc}") from exc
+    return storage_path
+
+
 def save_school_logo(
     school_uuid: UUID,
     content: bytes,
