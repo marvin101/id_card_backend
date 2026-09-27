@@ -14,7 +14,7 @@ DATABASE_URL = URL.create(
     host=settings.db_host,
     port=settings.db_port,
     database=settings.db_name,
-    query={"sslmode": "require"},
+    query={"sslmode": settings.db_sslmode},
 )
 
 

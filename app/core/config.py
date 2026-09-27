@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     db_name: str
     db_user: str
     db_password: str
+    db_sslmode: str = "require"
 
     # Authentication
     secret_key: str
