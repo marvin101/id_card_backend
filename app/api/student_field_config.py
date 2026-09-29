@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auto_admission import DEFAULT_STREAM_OPTIONS, apply_auto_admission_to_existing_students
 from app.core.database import get_db
 from app.core.school_access import get_active_school, require_card_data_access, require_school_admin
 from app.core.security import get_current_user
@@ -20,7 +21,11 @@ router = APIRouter(prefix="/schools/{school_uuid}/student-field-config", tags=["
 def get_student_field_config(school_uuid: UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     school = get_active_school(db, school_uuid)
     require_card_data_access(db, current_user, school.id)
-    return {"fields": effective_student_fields(db, school.id)}
+    return {
+        "fields": effective_student_fields(db, school.id),
+        "auto_admission_format": school.auto_admission_format,
+        "stream_options": school.stream_options or DEFAULT_STREAM_OPTIONS,
+    }
 
 
 @router.put("", response_model=BuiltinStudentFieldConfigResponse)
@@ -32,6 +37,16 @@ def put_student_field_config(
 ):
     school = get_active_school(db, school_uuid)
     require_school_admin(db, current_user, school.id, "Only a school administrator can manage student fields")
+
+    if payload.stream_options is not None:
+        school.stream_options = [opt.model_dump() for opt in payload.stream_options]
+
+    if payload.auto_admission_format is not None:
+        was_enabled = school.auto_admission_format
+        school.auto_admission_format = payload.auto_admission_format
+        if payload.auto_admission_format and not was_enabled:
+            apply_auto_admission_to_existing_students(db, school, actor=current_user)
+
     existing = db.execute(select(SchoolStudentFieldConfig).where(SchoolStudentFieldConfig.school_id == school.id)).scalars().all()
     by_key = {row.field_key: row for row in existing}
     for item in payload.fields:
@@ -43,4 +58,8 @@ def put_student_field_config(
         row.is_required = item.required
         row.display_order = item.display_order
     db.commit()
-    return {"fields": effective_student_fields(db, school.id)}
+    return {
+        "fields": effective_student_fields(db, school.id),
+        "auto_admission_format": school.auto_admission_format,
+        "stream_options": school.stream_options or DEFAULT_STREAM_OPTIONS,
+    }

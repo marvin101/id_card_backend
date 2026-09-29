@@ -15,8 +15,16 @@ class BuiltinStudentFieldResponse(BaseModel):
     display_order: int
 
 
+class StreamOption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=50)
+    code: str = Field(min_length=1, max_length=20)
+
+
 class BuiltinStudentFieldConfigResponse(BaseModel):
     fields: list[BuiltinStudentFieldResponse]
+    auto_admission_format: bool = False
+    stream_options: list[StreamOption] = Field(default_factory=list)
 
 
 class BuiltinStudentFieldWrite(BaseModel):
@@ -30,6 +38,8 @@ class BuiltinStudentFieldWrite(BaseModel):
 class BuiltinStudentFieldConfigWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fields: list[BuiltinStudentFieldWrite] = Field(min_length=1, max_length=len(BUILTIN_STUDENT_FIELDS))
+    auto_admission_format: bool | None = None
+    stream_options: list[StreamOption] | None = None
 
     @model_validator(mode="after")
     def validate_fields(self):

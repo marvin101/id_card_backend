@@ -99,3 +99,18 @@ def test_disabled_mutation_and_required_value_validation():
         validate_required_student_fields(config, values)
     values["blood_group"] = "A+"
     validate_required_student_fields(config, values)
+
+
+def test_student_field_config_write_with_auto_admission_and_streams():
+    fields = _payload()
+    payload = BuiltinStudentFieldConfigWrite(
+        fields=fields,
+        auto_admission_format=True,
+        stream_options=[
+            {"name": "Science", "code": "SCI"},
+            {"name": "Vocational", "code": "VOC"},
+        ],
+    )
+    assert payload.auto_admission_format is True
+    assert len(payload.stream_options) == 2
+    assert payload.stream_options[1].code == "VOC"

@@ -148,6 +148,20 @@ class School(Base):
         Integer, nullable=False, default=365, server_default="365"
     )
 
+    auto_admission_format: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    stream_options: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: [
+            {"name": "Science", "code": "SCI"},
+            {"name": "Arts", "code": "ARTS"},
+            {"name": "Commerce", "code": "COM"},
+        ],
+        server_default='[{"name": "Science", "code": "SCI"}, {"name": "Arts", "code": "ARTS"}, {"name": "Commerce", "code": "COM"}]',
+    )
+
     # ==========================================================
     # Status
     # ==========================================================
