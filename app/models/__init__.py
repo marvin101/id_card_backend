@@ -21,6 +21,7 @@ from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.bulk_photo_import import BulkPhotoImport
 from app.models.public_form import PublicForm, PublicFormSubmission
+from app.models.security_event import SecurityEvent
 
 __all__ = [
     "AuthSession",
@@ -45,4 +46,5 @@ __all__ = [
     "UserMfaRecoveryCode",
     "PublicForm",
     "PublicFormSubmission",
+    "SecurityEvent",
 ]

@@ -87,6 +87,13 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str = Field(min_length=1, max_length=200)
     new_password: str = Field(min_length=8, max_length=200)
+    confirm_new_password: str = Field(min_length=8, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_password_confirmation(self):
+        if self.new_password != self.confirm_new_password:
+            raise ValueError("New passwords do not match.")
+        return self
 
 
 class LoginRequest(BaseModel):

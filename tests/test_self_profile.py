@@ -241,7 +241,11 @@ def test_change_password_rehashes_and_revokes_other_sessions():
         response = client.post(
             "/users/me/change-password",
             headers={"Authorization": f"Bearer {token}"},
-            json={"current_password": "old-password", "new_password": "new-password"},
+            json={
+                    "current_password": "old-password",
+                    "new_password": "new-password",
+                    "confirm_new_password": "new-password",
+                },
         )
 
     assert response.status_code == 204
@@ -260,7 +264,11 @@ def test_change_password_rejects_wrong_current_password():
         response = client.post(
             "/users/me/change-password",
             headers={"Authorization": f"Bearer {token}"},
-            json={"current_password": "wrong-password", "new_password": "new-password"},
+            json={
+                "current_password": "wrong-password",
+                "new_password": "new-password",
+                "confirm_new_password": "new-password",
+            },
         )
 
     assert response.status_code == 400
@@ -277,8 +285,36 @@ def test_change_password_enforces_existing_minimum_length():
         response = client.post(
             "/users/me/change-password",
             headers={"Authorization": f"Bearer {token}"},
-            json={"current_password": "old-password", "new_password": "short"},
+            json={
+                "current_password": "old-password",
+                "new_password": "short",
+                "confirm_new_password": "short",
+            },
         )
 
     assert response.status_code == 422
+    assert session.commits == 0
+
+def test_change_password_rejects_mismatched_confirmation():
+    user = _user()
+    session = _ProfileSession(user)
+
+    token = create_access_token(
+        str(user.uuid),
+        session_id=uuid4(),
+    )
+
+    with _client_for(user, session) as client:
+        response = client.post(
+            "/users/me/change-password",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "current_password": "old-password",
+                "new_password": "new-password",
+                "confirm_new_password": "different-password",
+            },
+        )
+
+    assert response.status_code == 422
+    assert verify_password("old-password", user.password_hash)
     assert session.commits == 0
