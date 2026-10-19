@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     and_,
@@ -48,6 +49,15 @@ class SchoolClass(Base):
             "school_id",
             name="uq_class_id_school",
         ),
+        Index(
+            "ix_classes_school_sort_order",
+            "school_id",
+            "sort_order",
+        ),
+        Index(
+            "ix_classes_school_id",
+            "school_id",
+        ),
     )
 
     # ==========================================================
@@ -80,7 +90,6 @@ class SchoolClass(Base):
             ondelete="CASCADE",
         ),
         nullable=False,
-        index=True,
     )
 
     # ==========================================================

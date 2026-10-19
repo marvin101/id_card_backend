@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     ForeignKeyConstraint,
     String,
     Text,
@@ -56,6 +57,16 @@ class Student(Base):
     # ==========================================================
 
     __table_args__ = (
+                Index(
+            "ix_students_school_verification",
+            "school_id",
+            "verification_status",
+        ),
+        Index(
+            "ix_students_school_print_count",
+            "school_id",
+            "print_count",
+        ),
         CheckConstraint(
             "verification_status IN ('pending', 'needs_correction', 'verified')",
             name="ck_student_verification_status",

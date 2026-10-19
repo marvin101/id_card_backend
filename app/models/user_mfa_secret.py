@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,17 @@ from app.core.database import Base
 class UserMfaSecret(Base):
     __tablename__ = "user_mfa_secrets"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            name="user_mfa_secrets_user_id_key",
+        ),
+        Index(
+            "ix_user_mfa_secrets_user_id",
+            "user_id",
+        ),
+    )
+
     id: Mapped[int] = mapped_column(
         primary_key=True,
         autoincrement=True,
@@ -20,8 +31,6 @@ class UserMfaSecret(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,
-        index=True,
     )
 
     # The shared secret is encrypted at rest so a database compromise does not

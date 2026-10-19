@@ -8,6 +8,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -37,6 +38,22 @@ class Personnel(Base):
 
     __tablename__ = "personnel"
     __table_args__ = (
+                Index(
+            "ix_personnel_school_type_active",
+            "school_id",
+            "personnel_type",
+            "is_active",
+        ),
+        Index(
+            "ix_personnel_school_verification",
+            "school_id",
+            "verification_status",
+        ),
+        Index(
+            "ix_personnel_school_print_count",
+            "school_id",
+            "print_count",
+        ),
         CheckConstraint(
             "personnel_type IN ('teacher', 'staff')",
             name="ck_personnel_type",

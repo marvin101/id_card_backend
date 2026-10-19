@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -139,7 +140,7 @@ class School(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
     public_verification_fields: Mapped[list[str]] = mapped_column(
-        JSON,
+        JSON().with_variant(JSONB, "postgresql"),
         nullable=False,
         default=lambda: ["full_name", "admission_no", "class", "section"],
         server_default='["full_name", "admission_no", "class", "section"]',
@@ -159,7 +160,11 @@ class School(Base):
             {"name": "Arts", "code": "ARTS"},
             {"name": "Commerce", "code": "COM"},
         ],
-        server_default='[{"name": "Science", "code": "SCI"}, {"name": "Arts", "code": "ARTS"}, {"name": "Commerce", "code": "COM"}]',
+        server_default=(
+            '[{"name": "Science", "code": "SCI"}, '
+            '{"name": "Arts", "code": "ARTS"}, '
+            '{"name": "Commerce", "code": "COM"}]'
+        ),
     )
 
     # ==========================================================
