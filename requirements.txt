@@ -31,3 +31,5 @@ uvicorn==0.52.1
 python-multipart==0.0.32
 Pillow==12.3.0
 supabase==2.31.0
+pyotp==1.7.0
+qrcode==8.1
