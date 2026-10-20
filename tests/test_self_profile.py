@@ -36,7 +36,14 @@ class _Result:
 
 
 class _ProfileSession:
-    def __init__(self, user, *, school_rows=(), identity_match=None):
+    def __init__(
+        self,
+        user,
+        *,
+        school_rows=(),
+        identity_match=None,
+        security_events=(),
+    ):
         self.user = user
         self.school_rows = list(school_rows)
         self.identity_match = identity_match
@@ -44,20 +51,70 @@ class _ProfileSession:
         self.rollbacks = 0
         self.statements = []
         self.added_objects = []
+        self.security_events = list(security_events)
 
     def execute(self, statement):
         self.statements.append(statement)
+
+        statement_text = str(statement).lower().replace(" ", "")
         descriptions = getattr(statement, "column_descriptions", [])
         entity = descriptions[0].get("entity") if descriptions else None
+
+        if "count(" in statement_text:
+            return _Result(
+                len([
+                    event
+                    for event in self.security_events
+                    if event.user_id == self.user.id
+                ])
+            )
+
         if entity is User:
             return _Result(self.user)
+
         if entity is UserSchoolAccess:
             return _Result(rows=self.school_rows)
+
         if entity is SecurityEvent:
-            return _Result()
+            filtered_events = [
+                event
+                for event in self.security_events
+                if event.user_id == self.user.id
+            ]
+
+            ordered_events = sorted(
+                filtered_events,
+                key=lambda event: (event.created_at, event.id),
+                reverse=True,
+            )
+
+            offset_value = statement._offset_clause
+            limit_value = statement._limit_clause
+
+            offset = (
+                offset_value.value
+                if offset_value is not None and hasattr(offset_value, "value")
+                else 0
+            )
+            limit = (
+                limit_value.value
+                if limit_value is not None and hasattr(limit_value, "value")
+                else len(ordered_events)
+            )
+
+            return _Result(rows=ordered_events[offset:offset + limit])
+
         return _Result()
 
-    def scalar(self, _statement):
+    def scalar(self, statement):
+        statement_text = str(statement).lower().replace(" ", "")
+
+        if "count(" in statement_text:
+            return sum(
+                event.user_id == self.user.id
+                for event in self.security_events
+            )
+
         return self.identity_match
 
     def add(self, instance):
@@ -342,3 +399,99 @@ def test_change_password_rejects_mismatched_confirmation():
     assert response.status_code == 422
     assert verify_password("old-password", user.password_hash)
     assert session.commits == 0
+
+def test_security_events_returns_only_current_users_events():
+    user = _user()
+    other_user_id = 2
+    now = datetime.now(timezone.utc)
+
+    own_event = SecurityEvent(
+        id=1,
+        uuid=uuid4(),
+        user_id=user.id,
+        event_type="password_changed",
+        ip_address="127.0.0.1",
+        user_agent="TestClient",
+        details={"other_sessions_revoked": True},
+        created_at=now,
+    )
+    other_event = SecurityEvent(
+        id=2,
+        uuid=uuid4(),
+        user_id=other_user_id,
+        event_type="login",
+        ip_address="192.0.2.1",
+        user_agent="OtherClient",
+        details=None,
+        created_at=now,
+    )
+
+    session = _ProfileSession(
+        user,
+        security_events=[own_event, other_event],
+    )
+
+    with _client_for(user, session) as client:
+        response = client.get("/users/me/security-events")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+    assert body["items"][0]["uuid"] == str(own_event.uuid)
+    assert body["items"][0]["event_type"] == "password_changed"
+    assert body["items"][0]["details"]["other_sessions_revoked"] is True
+    assert "user_id" not in body["items"][0]
+    assert "id" not in body["items"][0]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"limit": 0},
+        {"limit": 101},
+        {"offset": -1},
+    ],
+)
+def test_security_events_rejects_invalid_pagination(params):
+    user = _user()
+    session = _ProfileSession(user)
+
+    with _client_for(user, session) as client:
+        response = client.get("/users/me/security-events", params=params)
+
+    assert response.status_code == 422
+
+
+def test_security_events_supports_pagination():
+    user = _user()
+    now = datetime.now(timezone.utc)
+
+    events = [
+        SecurityEvent(
+            id=index,
+            uuid=uuid4(),
+            user_id=user.id,
+            event_type=f"event_{index}",
+            ip_address=None,
+            user_agent=None,
+            details=None,
+            created_at=now,
+        )
+        for index in range(1, 4)
+    ]
+
+    session = _ProfileSession(user, security_events=events)
+
+    with _client_for(user, session) as client:
+        response = client.get(
+            "/users/me/security-events",
+            params={"limit": 2, "offset": 1},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 3
+    assert body["limit"] == 2
+    assert body["offset"] == 1
+    assert len(body["items"]) == 2

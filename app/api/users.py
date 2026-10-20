@@ -48,6 +48,8 @@ from app.schemas.auth import  (
     UserResponse, AdminUserCreate, AdminUserUpdate,
     ChangePasswordRequest, SelfProfileResponse, SelfProfileSchool,
     SelfProfileUpdate,
+    SecurityEventResponse,
+    SecurityEventListResponse,
     )
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -347,6 +349,54 @@ def change_my_password(
     db.commit()
     response.headers["Cache-Control"] = "no-store"
 
+@router.get(
+    "/me/security-events",
+    response_model=SecurityEventListResponse,
+    summary="List the current user's security events",
+)
+def list_my_security_events(
+    limit: int = 20,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Limit must be between 1 and 100, and offset must be non-negative.",
+        )
+
+    base_query = select(SecurityEvent).where(
+        SecurityEvent.user_id == current_user.id
+    )
+
+    total = db.scalar(
+        select(func.count()).select_from(base_query.subquery())
+    ) or 0
+
+    events = db.execute(
+        base_query
+        .order_by(SecurityEvent.created_at.desc(), SecurityEvent.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).scalars().all()
+
+    return SecurityEventListResponse(
+        items=[
+            SecurityEventResponse(
+                uuid=event.uuid,
+                event_type=event.event_type,
+                ip_address=event.ip_address,
+                user_agent=event.user_agent,
+                details=event.details,
+                created_at=event.created_at,
+            )
+            for event in events
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 # ==========================================================
 # List Users and Their Assignment State for a School

@@ -211,3 +211,19 @@ class AdminUserUpdate(BaseModel):
     @classmethod
     def validate_email(cls, value):
         return _validate_optional_email(value)
+    
+class SecurityEventResponse(BaseModel):
+    uuid: UUID
+    event_type: str
+    ip_address: str | None = None
+    user_agent: str | None = None
+    details: dict | None = None
+    created_at: datetime
+
+
+class SecurityEventListResponse(BaseModel):
+    items: list[SecurityEventResponse]
+    total: int
+    limit: int
+    offset: int
+
