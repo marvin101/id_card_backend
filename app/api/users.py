@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import func, select, or_
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +37,7 @@ from app.models.users import User
 from app.models.school import School
 from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_school_access import UserSchoolAccess
+from app.models.security_event import SecurityEvent
 from app.schemas.auth import  (
     SchoolAccessCreate, 
     SchoolAccessResponse, 
@@ -306,6 +307,7 @@ def remove_my_profile_photo(
 @router.post("/me/change-password", status_code=status.HTTP_204_NO_CONTENT)
 def change_my_password(
     data: ChangePasswordRequest,
+    request: Request,
     response: Response,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
@@ -329,6 +331,19 @@ def change_my_password(
         except (TypeError, ValueError, AttributeError):
             session_id = None
     revoke_user_sessions(db, user.id, except_session_id=session_id)
+
+    security_event = SecurityEvent(
+        user_id=user.id,
+        event_type="password_changed",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details={
+            "other_sessions_revoked": True,
+            "current_session_preserved": session_id is not None,
+        },
+    )
+    db.add(security_event)
+
     db.commit()
     response.headers["Cache-Control"] = "no-store"
 

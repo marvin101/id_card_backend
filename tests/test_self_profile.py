@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.core.database import get_db
 from app.core.security import create_access_token, get_current_user, hash_password, verify_password
 from app.main import app
+from app.models.security_event import SecurityEvent
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 
@@ -42,6 +43,7 @@ class _ProfileSession:
         self.commits = 0
         self.rollbacks = 0
         self.statements = []
+        self.added_objects = []
 
     def execute(self, statement):
         self.statements.append(statement)
@@ -51,10 +53,15 @@ class _ProfileSession:
             return _Result(self.user)
         if entity is UserSchoolAccess:
             return _Result(rows=self.school_rows)
+        if entity is SecurityEvent:
+            return _Result()
         return _Result()
 
     def scalar(self, _statement):
         return self.identity_match
+
+    def add(self, instance):
+        self.added_objects.append(instance)
 
     def commit(self):
         self.commits += 1
@@ -252,8 +259,25 @@ def test_change_password_rehashes_and_revokes_other_sessions():
     assert user.password_hash != old_hash
     assert not verify_password("old-password", user.password_hash)
     assert verify_password("new-password", user.password_hash)
-    assert any("UPDATE auth_sessions" in str(statement) for statement in session.statements)
+    assert any(
+        "UPDATE auth_sessions" in str(statement)
+        for statement in session.statements
+    )
     assert session.commits == 1
+
+    security_events = [
+        item
+        for item in session.added_objects
+        if isinstance(item, SecurityEvent)
+    ]
+
+    assert len(security_events) == 1
+
+    event = security_events[0]
+    assert event.user_id == user.id
+    assert event.event_type == "password_changed"
+    assert event.details["other_sessions_revoked"] is True
+    assert event.details["current_session_preserved"] is True   
 
 
 def test_change_password_rejects_wrong_current_password():
