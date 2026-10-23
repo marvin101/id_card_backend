@@ -29,7 +29,7 @@ typing_extensions==4.16.0
 tzdata==2026.3
 uvicorn==0.52.1
 python-multipart==0.0.32
-Pillow==12.3.0
+Pillow==13.0.0
 supabase==2.31.0
 pyotp==2.9.0
 qrcode==8.1
