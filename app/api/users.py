@@ -33,11 +33,23 @@ from app.core.school_access import (
     require_school_admin,
     require_school_role_management,
 )
+from app.core.mfa import (
+    decrypt_totp_secret,
+    encrypt_totp_secret,
+    generate_recovery_codes,
+    generate_totp_provisioning_uri,
+    generate_totp_secret,
+    hash_recovery_code,
+    recovery_code_expiry,
+    verify_totp_code,
+)
 from app.models.users import User
 from app.models.school import School
 from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_school_access import UserSchoolAccess
 from app.models.security_event import SecurityEvent
+from app.models.user_mfa_secret import UserMfaSecret
+from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.schemas.auth import  (
     SchoolAccessCreate, 
     SchoolAccessResponse, 
@@ -50,6 +62,9 @@ from app.schemas.auth import  (
     SelfProfileUpdate,
     SecurityEventResponse,
     SecurityEventListResponse,
+    MfaEnrollmentStartResponse,
+    MfaEnrollmentVerifyRequest,
+    MfaRecoveryCodesResponse,
     )
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -93,6 +108,178 @@ def _self_profile_response(db: Session, user: User) -> SelfProfileResponse:
         ],
     )
 
+@router.post(
+    "/me/mfa/enrollment",
+    response_model=MfaEnrollmentStartResponse,
+    summary="Start MFA enrollment",
+)
+def start_mfa_enrollment(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Lock the user row to serialize enrollment requests for this account.
+    user = db.execute(
+        select(User)
+        .where(User.id == current_user.id)
+        .with_for_update()
+    ).scalar_one()
+
+    existing = db.execute(
+        select(UserMfaSecret)
+        .where(UserMfaSecret.user_id == user.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if existing is not None and existing.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already enabled for this account.",
+        )
+
+    secret = generate_totp_secret()
+    encrypted_secret = encrypt_totp_secret(secret)
+
+    now = datetime.now(timezone.utc)
+
+    if existing is None:
+        record = UserMfaSecret(
+            user_id=user.id,
+            encrypted_secret=encrypted_secret,
+            issuer_label="CampusID",
+            is_enabled=False,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(record)
+    else:
+        # Replace a pending enrollment, but never replace an enabled secret.
+        existing.encrypted_secret = encrypted_secret
+        existing.issuer_label = "CampusID"
+        existing.updated_at = now
+
+    provisioning_uri = generate_totp_provisioning_uri(
+        secret=secret,
+        username=user.username,
+        issuer="CampusID",
+    )
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return MfaEnrollmentStartResponse(
+        provisioning_uri=provisioning_uri,
+        message=(
+            "Scan the provisioning URI with your authenticator app, "
+            "then verify a code to enable MFA."
+        ),
+    )
+@router.post(
+    "/me/mfa/enrollment/verify",
+    response_model=MfaRecoveryCodesResponse,
+    summary="Verify and enable MFA",
+)
+def verify_mfa_enrollment(
+    data: MfaEnrollmentVerifyRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Serialize verification and activation for this user.
+    user = db.execute(
+        select(User)
+        .where(User.id == current_user.id)
+        .with_for_update()
+    ).scalar_one()
+
+    record = db.execute(
+        select(UserMfaSecret)
+        .where(UserMfaSecret.user_id == user.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA enrollment has not been started.",
+        )
+
+    if record.is_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MFA is already enabled for this account.",
+        )
+
+    secret = decrypt_totp_secret(record.encrypted_secret)
+
+    if not verify_totp_code(secret, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid authenticator code.",
+        )
+
+    now = datetime.now(timezone.utc)
+
+    recovery_codes = generate_recovery_codes()
+    expires_at = recovery_code_expiry(now)
+
+    # Remove any stale codes before creating a new recovery-code batch.
+    db.execute(
+        select(UserMfaRecoveryCode)
+        .where(UserMfaRecoveryCode.user_id == user.id)
+        .with_for_update()
+    ).scalars().all()
+
+    db.query(UserMfaRecoveryCode).filter(
+        UserMfaRecoveryCode.user_id == user.id
+    ).delete(synchronize_session=False)
+
+    for code in recovery_codes:
+        db.add(
+            UserMfaRecoveryCode(
+                user_id=user.id,
+                code_hash=hash_recovery_code(code),
+                used_at=None,
+                created_at=now,
+                expires_at=expires_at,
+            )
+        )
+
+    record.is_enabled = True
+    record.updated_at = now
+
+    db.add(
+        SecurityEvent(
+            user_id=user.id,
+            event_type="mfa_enabled",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            details={
+                "method": "totp",
+                "recovery_codes_generated": len(recovery_codes),
+            },
+        )
+    )
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+    return MfaRecoveryCodesResponse(
+        recovery_codes=recovery_codes,
+        message=(
+            "MFA is enabled. Save these recovery codes securely. "
+            "They will not be displayed again."
+        ),
+    )
 
 def _resolve_registration_school(db: Session, user_data: UserCreate) -> School:
     """Resolve a registration request to exactly one active school."""

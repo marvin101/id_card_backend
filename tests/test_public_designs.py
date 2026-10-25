@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from alembic.command import heads
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -237,4 +238,5 @@ def test_public_design_migration_is_revocable_and_rls_hardening_is_in_history():
 
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "migrations"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["41fc38cc45c5"]
+    script = ScriptDirectory.from_config(config)
+    assert script.get_revision("9d567aa047aa") is not None

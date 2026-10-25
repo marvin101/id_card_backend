@@ -1,96 +1,204 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hmac
 import logging
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth_sessions import (
+    decode_refresh_token, invalid_session, refresh_session,
+    require_live_session, start_session,
+)
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.mfa import decrypt_totp_secret, hash_recovery_code, verify_totp_code
 from app.core.rate_limit import enforce_login_rate_limit, enforce_refresh_rate_limit
 from app.core.security import verify_password
-from app.core.auth_sessions import start_session, refresh_session, decode_refresh_token, require_live_session, invalid_session
-from uuid import UUID
+from app.models.security_event import SecurityEvent
+from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
+from app.models.user_mfa_secret import UserMfaSecret
 from app.models.users import User
-from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest
-
-
-router = APIRouter(
-    prefix="/auth",
-    tags=["Authentication"],
+from app.schemas.auth import (
+    LoginRequest, MfaChallengeResponse, MfaChallengeVerifyRequest,
+    RefreshRequest, TokenResponse,
 )
+
+router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
+MFA_CHALLENGE_TTL_MINUTES = 5
+_INVALID_MFA_DETAIL = "Invalid or expired MFA challenge or verification code."
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-)
+
+def _create_mfa_challenge(user: User) -> str:
+    now = datetime.now(timezone.utc)
+    return jwt.encode(
+        {
+            "sub": str(user.uuid),
+            "typ": "mfa_challenge",
+            "iat": now,
+            "exp": now + timedelta(minutes=MFA_CHALLENGE_TTL_MINUTES),
+        },
+        settings.secret_key,
+        algorithm=settings.algorithm,
+    )
+
+
+def _decode_mfa_challenge(token: str) -> UUID:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            options={"require": ["exp", "iat", "sub", "typ"]},
+        )
+        if payload.get("typ") != "mfa_challenge":
+            raise jwt.InvalidTokenError("Wrong token purpose")
+        return UUID(str(payload["sub"]))
+    except (jwt.PyJWTError, TypeError, ValueError, KeyError, AttributeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_INVALID_MFA_DETAIL,
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+
+
+@router.post("/login", response_model=TokenResponse | MfaChallengeResponse)
 def login(
     login_data: LoginRequest,
     _: None = Depends(enforce_login_rate_limit),
     db: Session = Depends(get_db),
 ):
-    # ------------------------------------------------------
-    # Find user
-    # ------------------------------------------------------
-
-    result = db.execute(
-        select(User).where(
-            User.username == login_data.username
-        )
-    )
-
-    user = result.scalar_one_or_none()
-
-    # ------------------------------------------------------
-    # Validate username and password
-    # ------------------------------------------------------
-
-    if user is None or not verify_password(
-        login_data.password,
-        user.password_hash,
-    ):
+    user = db.execute(select(User).where(User.username == login_data.username)).scalar_one_or_none()
+    if user is None or not verify_password(login_data.password, user.password_hash):
         logger.warning("Authentication failed: invalid credentials")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-        )
-
-    # ------------------------------------------------------
-    # Check account status
-    # ------------------------------------------------------
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
     if not user.is_active:
-        logger.warning("Authentication failed: inactive account")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+        raise HTTPException(status_code=403, detail="User account is inactive")
+
+    mfa = db.execute(
+        select(UserMfaSecret).where(
+            UserMfaSecret.user_id == user.id,
+            UserMfaSecret.is_enabled.is_(True),
+        )
+    ).scalar_one_or_none()
+    if mfa is not None:
+        # No session or normal tokens are created until MFA succeeds.
+        return MfaChallengeResponse(
+            mfa_required=True,
+            challenge_token=_create_mfa_challenge(user),
         )
 
-    # ------------------------------------------------------
-    # Update last login
-    # ------------------------------------------------------
-
     user.last_login = datetime.now(timezone.utc)
-
     tokens = start_session(db, user)
     db.commit()
     return tokens
 
 
-@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(enforce_refresh_rate_limit)])
+@router.post(
+    "/mfa/verify",
+    response_model=TokenResponse,
+    dependencies=[Depends(enforce_login_rate_limit)],
+)
+def verify_login_mfa(
+    data: MfaChallengeVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_uuid = _decode_mfa_challenge(data.challenge_token)
+    user = db.execute(select(User).where(User.uuid == user_uuid)).scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail=_INVALID_MFA_DETAIL)
+
+    mfa = db.execute(
+        select(UserMfaSecret)
+        .where(
+            UserMfaSecret.user_id == user.id,
+            UserMfaSecret.is_enabled.is_(True),
+        )
+        .with_for_update()
+    ).scalar_one_or_none()
+    if mfa is None:
+        raise HTTPException(status_code=401, detail=_INVALID_MFA_DETAIL)
+
+    now = datetime.now(timezone.utc)
+    submitted = data.code.strip()
+    method = None
+
+    if len(submitted) == 6 and submitted.isdigit():
+        try:
+            secret = decrypt_totp_secret(mfa.encrypted_secret)
+        except Exception:
+            logger.exception("MFA secret decryption failed")
+            raise HTTPException(
+                status_code=503,
+                detail="MFA verification is temporarily unavailable.",
+            ) from None
+        if verify_totp_code(secret, submitted):
+            method = "totp"
+
+    if method is None:
+        candidate_hash = hash_recovery_code(submitted)
+        recovery_codes = db.scalars(
+            select(UserMfaRecoveryCode)
+            .where(
+                UserMfaRecoveryCode.user_id == user.id,
+                UserMfaRecoveryCode.used_at.is_(None),
+                UserMfaRecoveryCode.expires_at > now,
+            )
+            .with_for_update()
+        ).all()
+        for recovery in recovery_codes:
+            if hmac.compare_digest(recovery.code_hash, candidate_hash):
+                recovery.used_at = now
+                method = "recovery_code"
+                break
+
+    if method is None:
+        db.rollback()
+        logger.warning("MFA verification failed for user UUID %s", user.uuid)
+        raise HTTPException(status_code=401, detail=_INVALID_MFA_DETAIL)
+
+    user.last_login = now
+    db.add(
+        SecurityEvent(
+            user_id=user.id,
+            event_type="login_mfa_verified",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            details={"method": method},
+        )
+    )
+    tokens = start_session(db, user)
+    db.commit()
+    return tokens
+
+
+@router.post(
+    "/refresh",
+    response_model=TokenResponse,
+    dependencies=[Depends(enforce_refresh_rate_limit)],
+)
 def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
     return refresh_session(db, data.refresh_token)
 
 
-@router.post("/logout", status_code=204, dependencies=[Depends(enforce_refresh_rate_limit)])
+@router.post(
+    "/logout",
+    status_code=204,
+    dependencies=[Depends(enforce_refresh_rate_limit)],
+)
 def logout(data: RefreshRequest, db: Session = Depends(get_db)):
     payload = decode_refresh_token(data.refresh_token)
-    user = db.execute(select(User).where(User.uuid == UUID(payload["sub"])).with_for_update()).scalar_one_or_none()
+    user = db.execute(
+        select(User).where(User.uuid == UUID(payload["sub"])).with_for_update()
+    ).scalar_one_or_none()
     if user is None:
         raise invalid_session()
     session = require_live_session(db, payload, user, lock=True)
-    # An unexpired signed credential for this session may revoke it even if
-    # rotation completed concurrently. It can never renew using a stale digest.
     session.revoked_at = datetime.now(timezone.utc)
     db.commit()

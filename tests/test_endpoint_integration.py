@@ -15,6 +15,7 @@ from app.models.school import School
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.models.auth_session import AuthSession
+from app.models.user_mfa_secret import UserMfaSecret
 
 
 class _Result:
@@ -62,6 +63,10 @@ class _EndpointSession:
 
         if entity is AuthSession:
             return _Result(next((item for item in self.added if isinstance(item, AuthSession) and item.id in params), None))
+
+        # Test users have no MFA configured unless a test explicitly supplies one.
+        if entity is UserMfaSecret:
+            return _Result()
 
         if entity is User:
             if self.user is None:

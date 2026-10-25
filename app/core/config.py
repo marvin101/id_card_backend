@@ -73,5 +73,7 @@ class Settings(BaseSettings):
     def public_credential_signing_key(self) -> str:
         return self.credential_signing_key or self.secret_key
 
+    mfa_encryption_key: str = ""
+
 
 settings = Settings()
