@@ -256,6 +256,7 @@ class MfaChallengeVerifyRequest(BaseModel):
 class MfaStatusResponse(BaseModel):
     enabled: bool
     recovery_codes_remaining: int
+    recovery_codes_can_regenerate: bool = False
 
 
 class MfaDisableRequest(BaseModel):

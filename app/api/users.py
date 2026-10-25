@@ -289,6 +289,80 @@ def verify_mfa_enrollment(
         ),
     )
 
+@router.post(
+    "/me/mfa/recovery-codes/acknowledge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Record acknowledgement that recovery codes were saved",
+)
+def acknowledge_recovery_codes_saved(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    mfa = db.execute(select(UserMfaSecret).where(
+        UserMfaSecret.user_id == current_user.id,
+        UserMfaSecret.is_enabled.is_(True),
+    )).scalar_one_or_none()
+    if mfa is None:
+        raise HTTPException(status_code=409, detail="Two-factor authentication is not enabled.")
+    db.add(SecurityEvent(
+        user_id=current_user.id,
+        event_type="recovery_codes_saved_acknowledged",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details={"acknowledged": True},
+    ))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT, headers={"Cache-Control": "no-store"})
+
+
+@router.post(
+    "/me/mfa/recovery-codes/regenerate",
+    response_model=MfaRecoveryCodesResponse,
+    summary="Regenerate recovery codes after all existing codes are used",
+)
+def regenerate_mfa_recovery_codes(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Lock the user row to serialize concurrent regeneration requests on PostgreSQL.
+    user = db.execute(select(User).where(User.id == current_user.id).with_for_update()).scalar_one()
+    mfa = db.execute(select(UserMfaSecret).where(
+        UserMfaSecret.user_id == user.id,
+        UserMfaSecret.is_enabled.is_(True),
+    ).with_for_update()).scalar_one_or_none()
+    if mfa is None:
+        raise HTTPException(status_code=409, detail="Two-factor authentication is not enabled.")
+    existing = db.execute(select(UserMfaRecoveryCode).where(
+        UserMfaRecoveryCode.user_id == user.id
+    ).with_for_update()).scalars().all()
+    if len(existing) != 10 or any(row.used_at is None for row in existing):
+        raise HTTPException(status_code=409, detail="You can generate new recovery codes only after all 10 existing codes have been used.")
+
+    now = datetime.now(timezone.utc)
+    codes = generate_recovery_codes()
+    expires_at = recovery_code_expiry(now)
+    db.query(UserMfaRecoveryCode).filter(UserMfaRecoveryCode.user_id == user.id).delete(synchronize_session=False)
+    for code in codes:
+        db.add(UserMfaRecoveryCode(
+            user_id=user.id, code_hash=hash_recovery_code(code), used_at=None,
+            created_at=now, expires_at=expires_at,
+        ))
+    db.add(SecurityEvent(
+        user_id=user.id,
+        event_type="mfa_recovery_codes_regenerated",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details={"count": len(codes)},
+    ))
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return MfaRecoveryCodesResponse(recovery_codes=codes, message="New recovery codes generated. Save them securely; they will not be displayed again.")
+
+
 @router.get(
     "/me/mfa/status",
     response_model=MfaStatusResponse,
@@ -303,17 +377,20 @@ def get_mfa_status(
     ).scalar_one_or_none()
     enabled = bool(mfa and mfa.is_enabled)
     remaining = 0
+    recovery_codes_can_regenerate = False
     if enabled:
-        remaining = db.scalar(
-            select(func.count()).select_from(UserMfaRecoveryCode).where(
+        rows = db.execute(
+            select(UserMfaRecoveryCode).where(
                 UserMfaRecoveryCode.user_id == current_user.id,
-                UserMfaRecoveryCode.used_at.is_(None),
-                UserMfaRecoveryCode.expires_at > datetime.now(timezone.utc),
             )
-        ) or 0
+        ).scalars().all()
+        now = datetime.now(timezone.utc)
+        remaining = sum(1 for row in rows if row.used_at is None and row.expires_at > now)
+        recovery_codes_can_regenerate = len(rows) == 10 and all(row.used_at is not None for row in rows)
     return MfaStatusResponse(
         enabled=enabled,
         recovery_codes_remaining=int(remaining),
+        recovery_codes_can_regenerate=recovery_codes_can_regenerate,
     )
 
 
