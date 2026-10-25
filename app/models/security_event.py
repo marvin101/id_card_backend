@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,7 +30,10 @@ class SecurityEvent(Base):
     )
 
     uuid: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
+        Uuid(as_uuid=True).with_variant(
+            PGUUID(as_uuid=True),
+            "postgresql",
+        ),
         unique=True,
         nullable=False,
         server_default=func.gen_random_uuid(),
@@ -57,7 +60,7 @@ class SecurityEvent(Base):
     )
 
     details: Mapped[dict | None] = mapped_column(
-        JSONB,
+        JSON().with_variant(JSONB, "postgresql"),
         nullable=True,
     )
 

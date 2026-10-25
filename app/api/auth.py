@@ -77,15 +77,35 @@ def _decode_mfa_challenge(token: str) -> tuple[UUID, str]:
 @router.post("/login", response_model=TokenResponse | MfaChallengeResponse)
 def login(
     login_data: LoginRequest,
+    request: Request,
     _: None = Depends(enforce_login_rate_limit),
     db: Session = Depends(get_db),
 ):
     user = db.execute(select(User).where(User.username == login_data.username)).scalar_one_or_none()
     if user is None or not verify_password(login_data.password, user.password_hash):
+        # Record failures only for a known account. Never create an account-
+        # enumeration side channel or store the submitted username/password.
+        if user is not None:
+            db.add(SecurityEvent(
+                user_id=user.id,
+                event_type="login_failed",
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                details={"stage": "password"},
+            ))
+            db.commit()
         logger.warning("Authentication failed: invalid credentials")
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     if not user.is_active:
+        db.add(SecurityEvent(
+            user_id=user.id,
+            event_type="login_failed",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            details={"stage": "account_status"},
+        ))
+        db.commit()
         raise HTTPException(status_code=403, detail="User account is inactive")
 
     mfa = db.execute(
@@ -182,7 +202,17 @@ def verify_login_mfa(
                 break
 
     if method is None:
+        # Undo any tentative changes (including a TOTP counter update), then
+        # record the failed MFA attempt in a fresh transaction.
         db.rollback()
+        db.add(SecurityEvent(
+            user_id=user.id,
+            event_type="login_mfa_failed",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            details={"stage": "second_factor"},
+        ))
+        db.commit()
         logger.warning("MFA verification failed for user UUID %s", user.uuid)
         raise HTTPException(status_code=401, detail=_INVALID_MFA_DETAIL)
 

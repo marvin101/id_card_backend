@@ -20,6 +20,7 @@ from app.models.user_school_access import UserSchoolAccess
 from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
+from app.models.security_event import SecurityEvent
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def journey():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.connect() as conn:
         conn.connection.create_function("gen_random_uuid", 0, lambda: uuid4().hex)
-    for model in (User, School, AuthSession, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode):
+    for model in (User, School, AuthSession, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode, SecurityEvent):
         model.__table__.create(engine)
     db = Session(engine, expire_on_commit=False)
     user = User(uuid=uuid4(), username="platform", full_name="Platform Admin", password_hash=hash_password("password123"),
