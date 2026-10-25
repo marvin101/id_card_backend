@@ -62,18 +62,28 @@ def issue_tokens(session, user):
             "refresh_expires_in": max(0, int((expires_at-now).total_seconds()))}
 
 
-def start_session(db, user):
+def start_session(db, user, request=None):
     db.execute(
         delete(AuthSession).where(
             AuthSession.expires_at <= datetime.now(timezone.utc)
         ).execution_options(synchronize_session=False)
     )
-    session = AuthSession(id=uuid4(), user_id=user.id,
-                          expires_at=datetime.now(timezone.utc)+timedelta(minutes=settings.refresh_token_expire_minutes),
-                          revoked_at=None)
+    now = datetime.now(timezone.utc)
+    session = AuthSession(
+        id=uuid4(),
+        user_id=user.id,
+        expires_at=now + timedelta(minutes=settings.refresh_token_expire_minutes),
+        revoked_at=None,
+        ip_address=(request.client.host[:45] if request and request.client else None),
+        user_agent=(request.headers.get("user-agent", "")[:500] or None) if request else None,
+        created_at=now,
+        last_seen_at=now,
+    )
     tokens = issue_tokens(session, user)
     db.add(session)
     return tokens
+
+
 
 
 def refresh_session(db, token):
@@ -89,6 +99,7 @@ def refresh_session(db, token):
         session.revoked_at = datetime.now(timezone.utc)
         db.commit()
         raise invalid_session()
+    session.last_seen_at = datetime.now(timezone.utc)
     result = issue_tokens(session, user)
     db.commit()
     return result

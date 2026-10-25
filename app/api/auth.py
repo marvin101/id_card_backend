@@ -122,7 +122,7 @@ def login(
         )
 
     user.last_login = datetime.now(timezone.utc)
-    tokens = start_session(db, user)
+    tokens = start_session(db, user, request=request)
     db.commit()
     return tokens
 
@@ -229,7 +229,7 @@ def verify_login_mfa(
             details={"method": method},
         )
     )
-    tokens = start_session(db, user)
+    tokens = start_session(db, user, request=request)
     db.commit()
     return tokens
 

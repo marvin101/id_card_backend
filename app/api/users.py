@@ -49,6 +49,7 @@ from app.models.school import School
 from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_school_access import UserSchoolAccess
 from app.models.security_event import SecurityEvent
+from app.models.auth_session import AuthSession
 from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.schemas.auth import  (
@@ -63,6 +64,8 @@ from app.schemas.auth import  (
     SelfProfileUpdate,
     SecurityEventResponse,
     SecurityEventListResponse,
+    AuthSessionResponse,
+    AuthSessionListResponse,
     MfaEnrollmentStartResponse,
     MfaEnrollmentVerifyRequest,
     MfaRecoveryCodesResponse,
@@ -724,6 +727,77 @@ def change_my_password(
 
     db.commit()
     response.headers["Cache-Control"] = "no-store"
+
+@router.get(
+    "/me/sessions",
+    response_model=AuthSessionListResponse,
+    summary="List the current user's active login sessions",
+)
+def list_my_sessions(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        payload = decode_access_token(credentials.credentials)
+        current_session_id = UUID(str(payload["sid"])) if payload.get("sid") else None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        current_session_id = None
+    now = datetime.now(timezone.utc)
+    sessions = db.scalars(
+        select(AuthSession)
+        .where(
+            AuthSession.user_id == current_user.id,
+            AuthSession.revoked_at.is_(None),
+            AuthSession.expires_at > now,
+        )
+        .order_by(AuthSession.last_seen_at.desc(), AuthSession.created_at.desc())
+    ).all()
+    return AuthSessionListResponse(items=[
+        AuthSessionResponse(
+            session_id=session.id,
+            ip_address=session.ip_address,
+            user_agent=session.user_agent,
+            created_at=session.created_at,
+            last_seen_at=session.last_seen_at,
+            expires_at=session.expires_at,
+            is_current=session.id == current_session_id,
+        ) for session in sessions
+    ])
+
+
+@router.delete(
+    "/me/sessions/{session_uuid}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke one of the current user's login sessions",
+)
+def revoke_my_session(
+    session_uuid: UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    session = db.execute(
+        select(AuthSession).where(
+            AuthSession.id == session_uuid,
+            AuthSession.user_id == current_user.id,
+            AuthSession.revoked_at.is_(None),
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Active session not found.")
+
+    session.revoked_at = datetime.now(timezone.utc)
+    db.add(SecurityEvent(
+        user_id=current_user.id,
+        event_type="session_revoked",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+        details={"revoked_session_id": str(session.id), "self_revoked": True},
+    ))
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 
 @router.get(
     "/me/security-events",

@@ -227,6 +227,20 @@ class SecurityEventListResponse(BaseModel):
     limit: int
     offset: int
 
+class AuthSessionResponse(BaseModel):
+    session_id: UUID
+    ip_address: str | None = None
+    user_agent: str | None = None
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    is_current: bool
+
+
+class AuthSessionListResponse(BaseModel):
+    items: list[AuthSessionResponse]
+
+
 class MfaEnrollmentStartResponse(BaseModel):
     provisioning_uri: str
     message: str

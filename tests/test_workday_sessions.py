@@ -278,3 +278,49 @@ def test_school_logo_removal_detaches_and_cleans_managed_object(journey, monkeyp
     response = client.delete(f"/schools/{school.uuid}/logo", headers=headers(login(client)["access_token"]))
     assert response.status_code == 200 and response.json()["logo_path"] is None
     assert deleted == [path]
+
+
+def test_active_sessions_list_marks_current_and_includes_device_metadata(journey):
+    client, _, _, _, _ = journey
+    first = login(client)
+    second = login(client)
+
+    response = client.get("/users/me/sessions", headers=headers(second["access_token"]))
+    assert response.status_code == 200
+    sessions = response.json()["items"]
+    assert len(sessions) == 2
+    current = [item for item in sessions if item["is_current"]]
+    assert len(current) == 1
+    assert current[0]["session_id"]
+    assert current[0]["created_at"]
+    assert current[0]["last_seen_at"]
+    assert current[0]["user_agent"]
+    assert all(not item["is_current"] for item in sessions if item["session_id"] != current[0]["session_id"])
+
+
+def test_revoke_individual_session_invalidates_that_session_and_logs_event(journey):
+    client, db, user, _, _ = journey
+    first = login(client)
+    second = login(client)
+
+    sessions_response = client.get("/users/me/sessions", headers=headers(second["access_token"]))
+    assert sessions_response.status_code == 200
+    first_session = next(
+        item for item in sessions_response.json()["items"]
+        if not item["is_current"]
+    )
+
+    revoked = client.delete(
+        f"/users/me/sessions/{first_session['session_id']}",
+        headers=headers(second["access_token"]),
+    )
+    assert revoked.status_code == 204
+    assert client.get("/users/me", headers=headers(first["access_token"])).status_code == 401
+    assert client.get("/users/me", headers=headers(second["access_token"])).status_code == 200
+    event = db.execute(
+        select(SecurityEvent).where(
+            SecurityEvent.user_id == user.id,
+            SecurityEvent.event_type == "session_revoked",
+        )
+    ).scalar_one()
+    assert event.details["revoked_session_id"] == first_session["session_id"]
