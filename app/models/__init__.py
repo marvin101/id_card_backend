@@ -18,6 +18,7 @@ from app.models.student_field_config import SchoolStudentFieldConfig
 from app.models.user_school_access import UserSchoolAccess
 from app.models.users import User
 from app.models.user_mfa_secret import UserMfaSecret
+from app.models.user_mfa_challenge import UserMfaChallenge
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.bulk_photo_import import BulkPhotoImport
 from app.models.public_form import PublicForm, PublicFormSubmission
@@ -43,6 +44,7 @@ __all__ = [
     "User",
     "UserSchoolAccess",
     "UserMfaSecret",
+    "UserMfaChallenge",
     "UserMfaRecoveryCode",
     "PublicForm",
     "PublicFormSubmission",

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,6 +57,12 @@ class UserMfaSecret(Base):
         nullable=False,
     )
     
+    # Last TOTP time-step accepted for login/enrollment; prevents code replay.
+    last_totp_counter: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+    )
+
     is_enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

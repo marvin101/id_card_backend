@@ -94,6 +94,38 @@ def verify_totp_code(
     )
 
 
+
+def matching_totp_counter(
+    secret: str,
+    code: str,
+    valid_window: int = 0,
+    now: Optional[datetime] = None,
+) -> Optional[int]:
+    """Return the matching TOTP time-step, or None.
+
+    By default, only the current 30-second time-step is accepted. This rejects
+    codes from an earlier step after they expire. Callers may explicitly pass a
+    wider valid_window when clock-skew tolerance is required. The caller must
+    persist the returned counter and reject counters already accepted so the
+    database transaction can enforce replay prevention atomically.
+    """
+    if not secret or not code or not code.isdigit() or len(code) != 6:
+        return None
+    if valid_window < 0:
+        raise ValueError("valid_window cannot be negative.")
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    totp = pyotp.TOTP(secret)
+    current_counter = int(current.timestamp() // totp.interval)
+    matches = [
+        counter
+        for counter in range(current_counter - valid_window, current_counter + valid_window + 1)
+        if counter >= 0 and hmac.compare_digest(totp.generate_otp(counter), code)
+    ]
+    return max(matches) if matches else None
+
 def generate_recovery_codes(
     count: int = RECOVERY_CODE_COUNT,
 ) -> list[str]:

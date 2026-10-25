@@ -9,6 +9,7 @@ from app.core.mfa import (
     generate_totp_provisioning_uri,
     generate_totp_secret,
     hash_recovery_code,
+    matching_totp_counter,
     recovery_code_expiry,
     verify_recovery_code,
     verify_totp_code,
@@ -105,3 +106,31 @@ def test_invalid_recovery_code_count():
 
     with pytest.raises(ValueError):
         generate_recovery_codes(51)
+
+def test_matching_totp_counter_rejects_previous_step_by_default():
+    from datetime import datetime, timezone
+
+    secret = generate_totp_secret()
+    fixed_now = datetime(2026, 10, 25, 12, 0, 15, tzinfo=timezone.utc)
+    totp = pyotp.TOTP(secret)
+
+    # Generate a code from the genuinely previous 30-second interval.
+    previous_step_code = totp.at(
+        datetime(2026, 10, 25, 11, 59, 30, tzinfo=timezone.utc)
+    )
+
+    # Reject the previous interval by default.
+    assert matching_totp_counter(
+        secret, previous_step_code, now=fixed_now
+    ) is None
+
+    # Accept it only when one-step clock tolerance is explicitly allowed.
+    assert matching_totp_counter(
+        secret,
+        previous_step_code,
+        valid_window=1,
+        now=fixed_now,
+    ) is not None
+
+
+

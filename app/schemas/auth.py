@@ -252,3 +252,14 @@ class MfaChallengeResponse(BaseModel):
 class MfaChallengeVerifyRequest(BaseModel):
     challenge_token: str = Field(min_length=1, max_length=4096)
     code: str = Field(min_length=6, max_length=64)
+
+class MfaStatusResponse(BaseModel):
+    enabled: bool
+    recovery_codes_remaining: int
+
+
+class MfaDisableRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    current_password: str = Field(min_length=1, max_length=200)
+    code: str = Field(min_length=6, max_length=64)

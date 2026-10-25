@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import func, select, or_
+from sqlalchemy import func, select, or_, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -40,8 +40,9 @@ from app.core.mfa import (
     generate_totp_provisioning_uri,
     generate_totp_secret,
     hash_recovery_code,
+    matching_totp_counter,
+    verify_recovery_code,
     recovery_code_expiry,
-    verify_totp_code,
 )
 from app.models.users import User
 from app.models.school import School
@@ -65,6 +66,8 @@ from app.schemas.auth import  (
     MfaEnrollmentStartResponse,
     MfaEnrollmentVerifyRequest,
     MfaRecoveryCodesResponse,
+    MfaStatusResponse,
+    MfaDisableRequest,
     )
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -114,6 +117,7 @@ def _self_profile_response(db: Session, user: User) -> SelfProfileResponse:
     summary="Start MFA enrollment",
 )
 def start_mfa_enrollment(
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -169,6 +173,8 @@ def start_mfa_enrollment(
         db.rollback()
         raise
 
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     return MfaEnrollmentStartResponse(
         provisioning_uri=provisioning_uri,
         message=(
@@ -215,7 +221,8 @@ def verify_mfa_enrollment(
 
     secret = decrypt_totp_secret(record.encrypted_secret)
 
-    if not verify_totp_code(secret, data.code):
+    matched_counter = matching_totp_counter(secret, data.code)
+    if matched_counter is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid authenticator code.",
@@ -249,6 +256,7 @@ def verify_mfa_enrollment(
         )
 
     record.is_enabled = True
+    record.last_totp_counter = matched_counter
     record.updated_at = now
 
     db.add(
@@ -280,6 +288,110 @@ def verify_mfa_enrollment(
             "They will not be displayed again."
         ),
     )
+
+@router.get(
+    "/me/mfa/status",
+    response_model=MfaStatusResponse,
+    summary="Get current user's MFA status",
+)
+def get_mfa_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    mfa = db.execute(
+        select(UserMfaSecret).where(UserMfaSecret.user_id == current_user.id)
+    ).scalar_one_or_none()
+    enabled = bool(mfa and mfa.is_enabled)
+    remaining = 0
+    if enabled:
+        remaining = db.scalar(
+            select(func.count()).select_from(UserMfaRecoveryCode).where(
+                UserMfaRecoveryCode.user_id == current_user.id,
+                UserMfaRecoveryCode.used_at.is_(None),
+                UserMfaRecoveryCode.expires_at > datetime.now(timezone.utc),
+            )
+        ) or 0
+    return MfaStatusResponse(
+        enabled=enabled,
+        recovery_codes_remaining=int(remaining),
+    )
+
+
+@router.post(
+    "/me/mfa/disable",
+    response_model=MfaStatusResponse,
+    summary="Disable MFA after password and second-factor verification",
+)
+def disable_mfa(
+    data: MfaDisableRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = db.execute(
+        select(User).where(User.id == current_user.id).with_for_update()
+    ).scalar_one()
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid password or MFA code.")
+
+    mfa = db.execute(
+        select(UserMfaSecret)
+        .where(UserMfaSecret.user_id == user.id)
+        .with_for_update()
+    ).scalar_one_or_none()
+    if mfa is None or not mfa.is_enabled:
+        raise HTTPException(status_code=409, detail="MFA is not enabled.")
+
+    try:
+        secret = decrypt_totp_secret(mfa.encrypted_secret)
+        matched_counter = matching_totp_counter(secret, data.code)
+    except (RuntimeError, ValueError):
+        logger.exception("MFA secret could not be verified while disabling MFA")
+        raise HTTPException(
+            status_code=503,
+            detail="MFA verification is temporarily unavailable.",
+        ) from None
+
+    now = datetime.now(timezone.utc)
+    valid_totp = (
+        matched_counter is not None
+        and (mfa.last_totp_counter is None or matched_counter > mfa.last_totp_counter)
+    )
+    if valid_totp:
+        mfa.last_totp_counter = matched_counter
+    else:
+        recovery_rows = db.execute(
+            select(UserMfaRecoveryCode)
+            .where(
+                UserMfaRecoveryCode.user_id == user.id,
+                UserMfaRecoveryCode.used_at.is_(None),
+                UserMfaRecoveryCode.expires_at > now,
+            )
+            .with_for_update()
+        ).scalars().all()
+        recovery = next(
+            (row for row in recovery_rows if verify_recovery_code(data.code, row.code_hash)),
+            None,
+        )
+        if recovery is None:
+            raise HTTPException(status_code=401, detail="Invalid password or MFA code.")
+        recovery.used_at = now
+
+    db.execute(delete(UserMfaRecoveryCode).where(UserMfaRecoveryCode.user_id == user.id))
+    db.delete(mfa)
+    db.add(SecurityEvent(
+        user_id=user.id,
+        event_type="mfa_disabled",
+        details={"method": "totp" if valid_totp else "recovery_code"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    ))
+    db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return MfaStatusResponse(enabled=False, recovery_codes_remaining=0)
+
 
 def _resolve_registration_school(db: Session, user_data: UserCreate) -> School:
     """Resolve a registration request to exactly one active school."""
