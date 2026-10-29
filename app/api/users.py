@@ -3,7 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import func, select, or_, delete
+from sqlalchemy import func, select, or_, delete, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -50,6 +50,7 @@ from app.models.school_access_request import SchoolAccessRequest
 from app.models.user_school_access import UserSchoolAccess
 from app.models.security_event import SecurityEvent
 from app.models.auth_session import AuthSession
+from app.models.trusted_device import TrustedDevice
 from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.schemas.auth import  (
@@ -66,6 +67,7 @@ from app.schemas.auth import  (
     SecurityEventListResponse,
     AuthSessionResponse,
     AuthSessionListResponse,
+    TrustedDeviceResponse, TrustedDeviceListResponse,
     MfaEnrollmentStartResponse,
     MfaEnrollmentVerifyRequest,
     MfaRecoveryCodesResponse,
@@ -232,6 +234,11 @@ def verify_mfa_enrollment(
         )
 
     now = datetime.now(timezone.utc)
+    # Enabling MFA invalidates any previously trusted browser credentials.
+    db.query(TrustedDevice).filter(
+        TrustedDevice.user_id == user.id,
+        TrustedDevice.revoked_at.is_(None),
+    ).update({TrustedDevice.revoked_at: now}, synchronize_session=False)
 
     recovery_codes = generate_recovery_codes()
     expires_at = recovery_code_expiry(now)
@@ -460,6 +467,7 @@ def disable_mfa(
 
     db.execute(delete(UserMfaRecoveryCode).where(UserMfaRecoveryCode.user_id == user.id))
     db.delete(mfa)
+    db.query(TrustedDevice).filter(TrustedDevice.user_id == user.id, TrustedDevice.revoked_at.is_(None)).update({TrustedDevice.revoked_at: now}, synchronize_session=False)
     db.add(SecurityEvent(
         user_id=user.id,
         event_type="mfa_disabled",
@@ -471,6 +479,28 @@ def disable_mfa(
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
     return MfaStatusResponse(enabled=False, recovery_codes_remaining=0)
+
+
+@router.get("/me/trusted-devices", response_model=TrustedDeviceListResponse)
+def list_trusted_devices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    rows = db.execute(select(TrustedDevice).where(TrustedDevice.user_id == current_user.id, TrustedDevice.revoked_at.is_(None)).order_by(TrustedDevice.created_at.desc())).scalars().all()
+    return TrustedDeviceListResponse(devices=[TrustedDeviceResponse(
+        id=row.id, device_name=row.device_name, user_agent=row.user_agent, created_at=row.created_at,
+        expires_at=row.expires_at, last_used_at=row.last_used_at, is_expired=row.expires_at <= now
+    ) for row in rows])
+
+@router.delete("/me/trusted-devices/{device_id}", status_code=204)
+def revoke_trusted_device(device_id: UUID, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    row = db.execute(select(TrustedDevice).where(TrustedDevice.id == device_id, TrustedDevice.user_id == current_user.id).with_for_update()).scalar_one_or_none()
+    if row is None or row.revoked_at is not None:
+        raise HTTPException(status_code=404, detail="Trusted device not found.")
+    row.revoked_at = datetime.now(timezone.utc)
+    db.add(SecurityEvent(user_id=current_user.id, event_type="trusted_device_revoked",
+        ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent"),
+        details={"trusted_device_id": str(row.id)}))
+    db.commit()
+    return Response(status_code=204)
 
 
 def _resolve_registration_school(db: Session, user_data: UserCreate) -> School:
@@ -704,6 +734,16 @@ def change_my_password(
         )
 
     user.password_hash = hash_password(data.new_password)
+    now = datetime.now(timezone.utc)
+
+    db.execute(
+        update(TrustedDevice)
+        .where(
+            TrustedDevice.user_id == user.id,
+            TrustedDevice.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
     session_id = None
     payload = decode_access_token(credentials.credentials)
     if payload.get("sid"):
@@ -1407,6 +1447,17 @@ def update_account(user_uuid: UUID, data: AdminUserUpdate, db: Session = Depends
     _check_account_identity(db, email=values.get("email"), exclude_id=user.id)
     if "password" in values:
         user.password_hash = hash_password(values.pop("password"))
+
+        now = datetime.now(timezone.utc)
+
+        db.execute(
+            update(TrustedDevice)
+            .where(
+                TrustedDevice.user_id == user.id,
+                TrustedDevice.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
     if "platform_role" in values:
         user.is_platform_admin = values["platform_role"] == "platform_admin"
     for name, value in values.items():

@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+import secrets
 import hmac
 import logging
 from uuid import UUID, uuid4
@@ -18,6 +20,7 @@ from app.core.mfa import decrypt_totp_secret, hash_recovery_code, matching_totp_
 from app.core.rate_limit import enforce_login_rate_limit, enforce_refresh_rate_limit
 from app.core.security import verify_password
 from app.models.security_event import SecurityEvent
+from app.models.trusted_device import TrustedDevice
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_challenge import UserMfaChallenge
@@ -34,12 +37,13 @@ MFA_CHALLENGE_TTL_MINUTES = 5
 _INVALID_MFA_DETAIL = "Invalid or expired MFA challenge or verification code."
 
 
-def _create_mfa_challenge(user: User, db: Session) -> str:
+def _create_mfa_challenge(user: User, db: Session, *, remember_device: bool = False) -> str:
     now = datetime.now(timezone.utc)
     jti = str(uuid4())
     expires_at = now + timedelta(minutes=MFA_CHALLENGE_TTL_MINUTES)
     db.add(UserMfaChallenge(
-        jti=jti, user_id=user.id, created_at=now, expires_at=expires_at, consumed_at=None
+        jti=jti, user_id=user.id, created_at=now, expires_at=expires_at, consumed_at=None,
+        remember_device=remember_device,
     ))
     db.commit()
     return jwt.encode(
@@ -73,6 +77,42 @@ def _decode_mfa_challenge(token: str) -> tuple[UUID, str]:
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
 
+
+def _trusted_device(db: Session, user: User, token: str | None, now: datetime):
+    if not token or len(token) < 32 or len(token) > 256:
+        return None
+    digest = sha256(token.encode("utf-8")).hexdigest()
+    device = db.execute(
+        select(TrustedDevice).where(
+            TrustedDevice.user_id == user.id, TrustedDevice.token_hash == digest,
+            TrustedDevice.revoked_at.is_(None), TrustedDevice.expires_at > now,
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if device is not None:
+        device.last_used_at = now
+    return device
+
+def _rotate_trusted_device(device: TrustedDevice) -> str:
+    """Rotate the one-time bearer credential after each successful use."""
+    raw_token = secrets.token_urlsafe(48)
+    device.token_hash = sha256(raw_token.encode("utf-8")).hexdigest()
+    return raw_token
+
+def _issue_trusted_device(db: Session, user: User, request: Request, device_name: str | None):
+    now = datetime.now(timezone.utc)
+    raw_token = secrets.token_urlsafe(48)
+    agent = request.headers.get("user-agent", "")[:500] or None
+    device = TrustedDevice(
+        id=uuid4(), user_id=user.id, token_hash=sha256(raw_token.encode("utf-8")).hexdigest(),
+        device_name=(device_name or "Trusted browser")[:120], user_agent=agent,
+        created_at=now, expires_at=now + timedelta(days=settings.trusted_device_ttl_days),
+        last_used_at=now, revoked_at=None,
+    )
+    db.add(device)
+    db.add(SecurityEvent(user_id=user.id, event_type="trusted_device_added",
+        ip_address=request.client.host if request.client else None, user_agent=agent,
+        details={"expires_in_days": settings.trusted_device_ttl_days}))
+    return raw_token
 
 @router.post("/login", response_model=TokenResponse | MfaChallengeResponse)
 def login(
@@ -115,11 +155,22 @@ def login(
         )
     ).scalar_one_or_none()
     if mfa is not None:
-        # No session or normal tokens are created until MFA succeeds.
-        return MfaChallengeResponse(
-            mfa_required=True,
-            challenge_token=_create_mfa_challenge(user, db),
-        )
+        now = datetime.now(timezone.utc)
+        trusted = _trusted_device(db, user, login_data.trusted_device_token, now)
+        if trusted is None:
+            # No normal session is created until MFA succeeds.
+            return MfaChallengeResponse(
+                mfa_required=True,
+                challenge_token=_create_mfa_challenge(user, db, remember_device=login_data.remember_device),
+            )
+        user.last_login = now
+        db.add(SecurityEvent(user_id=user.id, event_type="trusted_device_login",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"), details={"trusted_device_id": str(trusted.id)}))
+        tokens = start_session(db, user, request=request)
+        tokens["trusted_device_token"] = _rotate_trusted_device(trusted)
+        db.commit()
+        return tokens
 
     user.last_login = datetime.now(timezone.utc)
     tokens = start_session(db, user, request=request)
@@ -230,6 +281,10 @@ def verify_login_mfa(
         )
     )
     tokens = start_session(db, user, request=request)
+    if challenge.remember_device:
+        tokens["trusted_device_token"] = _issue_trusted_device(
+            db, user, request, data.device_name
+        )
     db.commit()
     return tokens
 

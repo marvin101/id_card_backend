@@ -97,8 +97,11 @@ class ChangePasswordRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     username: str
     password: str
+    remember_device: bool = False
+    trusted_device_token: str | None = Field(default=None, min_length=32, max_length=256)
 
 
 class TokenResponse(BaseModel):
@@ -107,6 +110,7 @@ class TokenResponse(BaseModel):
     refresh_token: str | None = None
     expires_in: int | None = None
     refresh_expires_in: int | None = None
+    trusted_device_token: str | None = None
 
 class SchoolAccessResponse(BaseModel):
     user_uuid: UUID
@@ -264,8 +268,10 @@ class MfaChallengeResponse(BaseModel):
 
 
 class MfaChallengeVerifyRequest(BaseModel):
+    model_config = {"extra": "forbid"}
     challenge_token: str = Field(min_length=1, max_length=4096)
     code: str = Field(min_length=6, max_length=64)
+    device_name: str | None = Field(default=None, max_length=120)
 
 class MfaStatusResponse(BaseModel):
     enabled: bool
@@ -278,3 +284,16 @@ class MfaDisableRequest(BaseModel):
 
     current_password: str = Field(min_length=1, max_length=200)
     code: str = Field(min_length=6, max_length=64)
+
+
+class TrustedDeviceResponse(BaseModel):
+    id: UUID
+    device_name: str | None = None
+    user_agent: str | None = None
+    created_at: datetime
+    expires_at: datetime
+    last_used_at: datetime | None = None
+    is_expired: bool = False
+
+class TrustedDeviceListResponse(BaseModel):
+    devices: list[TrustedDeviceResponse] = Field(default_factory=list)

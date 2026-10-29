@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=30, ge=1)
 
     refresh_token_expire_minutes: int = Field(default=12 * 60, ge=60)
+    trusted_device_ttl_days: int = Field(default=30, ge=1, le=365)
 
     # Supabase
     supabase_url: str
