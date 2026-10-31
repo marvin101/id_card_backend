@@ -1,0 +1,21 @@
+# CampusID backend dependencies
+# Dependency specification for pip/pip-tools; versions are bounded to avoid unintended major upgrades.
+
+alembic>=1.20,<2
+fastapi>=0.162,<1
+Pillow>=12.3,<13
+psycopg[binary]>=3.3,<4
+pwdlib[argon2]>=0.3,<1
+pydantic-settings>=2.15,<3
+PyJWT[crypto]>=2.15,<3
+pyotp>=2.10,<3
+python-dotenv>=1.2,<2
+python-multipart>=0.0.32,<1
+qrcode>=8.1,<9
+SQLAlchemy>=2.0.54,<3
+supabase==2.31.0
+uvicorn>=0.52,<1
+
+# Restricted Supabase realtime stack
+realtime==2.31.0
+websockets>=11,<16
