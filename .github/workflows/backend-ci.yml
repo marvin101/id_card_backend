@@ -55,6 +55,8 @@ jobs:
 
       - name: Run tests
         run: python -m pytest --strict-config --strict-markers
+        env:
+            MFA_ENCRYPTION_KEY: O1A5R-xj0_DUVVfU6sfsx1bS9bq3S8oRg4KqYT6Hn4M=
 
       - name: Compile application modules
         run: python -m compileall -q app
