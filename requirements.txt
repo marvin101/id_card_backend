@@ -72,7 +72,7 @@ opentelemetry-api==1.45.2
     # via fastapi
 packaging==26.3
     # via deprecation
-pillow==12.3.0
+pillow==13.0.0
     # via -r requirements-updated.txt
 postgrest==2.31.0
     # via supabase
