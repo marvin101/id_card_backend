@@ -113,7 +113,7 @@ python-multipart==0.0.33
     # via -r requirements-updated.txt
 qrcode==8.2
     # via -r requirements-updated.txt
-realtime==2.31.0
+realtime==2.34.0
     # via
     #   -r requirements-updated.txt
     #   supabase

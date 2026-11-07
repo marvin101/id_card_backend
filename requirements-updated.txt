@@ -17,5 +17,5 @@ supabase==2.34.1
 uvicorn>=0.52,<1
 
 # Restricted Supabase realtime stack
-realtime==2.34.1
+realtime==2.34.0
 websockets>=11,<16
