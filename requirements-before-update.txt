@@ -78,7 +78,7 @@ postgrest==2.31.0
     # via supabase
 propcache==0.5.4
     # via yarl
-psycopg[binary]==3.3.6
+psycopg[binary]==3.3.7
     # via -r requirements-updated.txt
 psycopg-binary==3.3.6
     # via psycopg
