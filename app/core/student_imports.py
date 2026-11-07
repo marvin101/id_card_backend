@@ -195,6 +195,10 @@ async def parse_student_upload(
         return _validate_table(headers, rows, entity_label=entity_label)
     raise HTTPException(status_code=422, detail="Only CSV and XLSX files are supported")
 
+def _manifest_path(upload_id: UUID) -> Path:
+    """Return the filesystem path for an import manifest."""
+    return IMPORT_DIR / f"{upload_id.hex}.json"
+
 
 def save_import_manifest(
     *,
@@ -208,7 +212,7 @@ def save_import_manifest(
     IMPORT_DIR.mkdir(parents=True, exist_ok=True)
     upload_id = uuid4()
     manifest = {"upload_id": str(upload_id), "school_uuid": str(school_uuid), "user_id": user_id, "filename": filename, "created_at": datetime.now(timezone.utc).timestamp(), "purpose": purpose, "headers": headers, "rows": rows}
-    (IMPORT_DIR / f"{upload_id}.json").write_text(json.dumps(manifest), encoding="utf-8")
+    _manifest_path(upload_id).write_text(json.dumps(manifest), encoding="utf-8")
     return upload_id
 
 
@@ -219,7 +223,7 @@ def load_import_manifest(
     user_id: int,
     purpose: str = "student",
 ) -> dict[str, Any]:
-    path = IMPORT_DIR / f"{upload_id}.json"
+    path = _manifest_path(upload_id)
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as exc:
@@ -238,4 +242,4 @@ def load_import_manifest(
 
 
 def delete_import_manifest(upload_id: UUID) -> None:
-    (IMPORT_DIR / f"{upload_id}.json").unlink(missing_ok=True)
+    _manifest_path(upload_id).unlink(missing_ok=True)
