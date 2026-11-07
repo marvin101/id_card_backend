@@ -51,6 +51,7 @@ httpcore==1.0.9
 httpx[http2]==0.28.1
     # via
     #   postgrest
+    #   realtime
     #   storage3
     #   supabase
     #   supabase-auth
@@ -74,7 +75,7 @@ packaging==26.3
     # via deprecation
 pillow==13.0.0
     # via -r requirements-updated.txt
-postgrest==2.31.0
+postgrest==2.34.1
     # via supabase
 propcache==0.5.4
     # via yarl
@@ -113,7 +114,7 @@ python-multipart==0.0.33
     # via -r requirements-updated.txt
 qrcode==8.2
     # via -r requirements-updated.txt
-realtime==2.31.0
+realtime==2.34.1
     # via
     #   -r requirements-updated.txt
     #   supabase
@@ -123,15 +124,13 @@ sqlalchemy==2.1.6
     #   alembic
 starlette==1.10.0
     # via fastapi
-storage3==2.31.0
+storage3==2.34.1
     # via supabase
-strenum==0.4.15
-    # via supabase-functions
-supabase==2.31.0
+supabase==2.34.1
     # via -r requirements-updated.txt
-supabase-auth==2.31.0
+supabase-auth==2.34.1
     # via supabase
-supabase-functions==2.31.0
+supabase-functions==2.34.1
     # via supabase
 typing-extensions==4.16.0
     # via
