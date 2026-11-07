@@ -13,3 +13,7 @@ os.environ.setdefault("ALGORITHM", "HS256")
 os.environ.setdefault("SUPABASE_URL", "https://example.supabase.co")
 os.environ.setdefault("SUPABASE_SECRET_KEY", "test-only-supabase-key")
 os.environ.setdefault("AUTH_RATE_LIMIT_TRUSTED_PROXY_HOPS", "0")
+os.environ.setdefault(
+    "MFA_ENCRYPTION_KEY",
+    "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+)
