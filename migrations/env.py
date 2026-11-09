@@ -19,6 +19,7 @@ from app.models import (
     StudentAuditEvent,
     User,
     UserSchoolAccess,
+    EmailVerificationToken
 )
 
 

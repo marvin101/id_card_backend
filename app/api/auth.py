@@ -6,7 +6,7 @@ import logging
 from uuid import UUID, uuid4
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,8 +17,8 @@ from app.core.auth_sessions import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.mfa import decrypt_totp_secret, hash_recovery_code, matching_totp_counter
-from app.core.rate_limit import enforce_login_rate_limit, enforce_refresh_rate_limit
-from app.core.security import verify_password
+from app.core.rate_limit import enforce_login_rate_limit, enforce_refresh_rate_limit, enforce_email_verification_rate_limit, get_client_address
+from app.core.security import verify_password, get_current_user
 from app.models.security_event import SecurityEvent
 from app.models.trusted_device import TrustedDevice
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
@@ -27,7 +27,14 @@ from app.models.user_mfa_challenge import UserMfaChallenge
 from app.models.users import User
 from app.schemas.auth import (
     LoginRequest, MfaChallengeResponse, MfaChallengeVerifyRequest,
-    RefreshRequest, TokenResponse,
+    RefreshRequest, TokenResponse, EmailVerificationRequest,
+)
+from html import escape
+
+from app.core.email import send_email, EmailDeliveryError
+from app.core.email_verification import (
+    issue_email_verification_token,
+    verify_email_token,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -35,6 +42,14 @@ logger = logging.getLogger(__name__)
 
 MFA_CHALLENGE_TTL_MINUTES = 5
 _INVALID_MFA_DETAIL = "Invalid or expired MFA challenge or verification code."
+_EMAIL_VERIFICATION_SUCCESS = (
+    "Your email address has been verified."
+)
+
+_EMAIL_VERIFICATION_INVALID = (
+    "This verification link is invalid or has expired. "
+    "Request a new verification email."
+)
 
 
 def _create_mfa_challenge(user: User, db: Session, *, remember_device: bool = False) -> str:
@@ -113,6 +128,37 @@ def _issue_trusted_device(db: Session, user: User, request: Request, device_name
         ip_address=request.client.host if request.client else None, user_agent=agent,
         details={"expires_in_days": settings.trusted_device_ttl_days}))
     return raw_token
+
+def _send_verification_email(
+    recipient: str,
+    raw_token: str,
+) -> None:
+    verification_url = (
+        f"{settings.public_app_url.rstrip('/')}"
+        f"/verify-email/{raw_token}"
+    )
+
+    send_email(
+        recipient=recipient,
+        subject="Verify your CampusID email address",
+        text_body=(
+            "Hello,\n\n"
+            "Please verify your email address by opening this link:\n\n"
+            f"{verification_url}\n\n"
+            "This link expires in 30 minutes and can only be used once.\n\n"
+            "If you did not request this, you can ignore this email."
+        ),
+        html_body=(
+            "<html><body>"
+            "<h2>Verify your CampusID email address</h2>"
+            "<p>Please click the button below to verify your email.</p>"
+            f'<p><a href="{escape(verification_url, quote=True)}">'
+            "Verify email</a></p>"
+            "<p>This link expires in 30 minutes and can only be used once.</p>"
+            "<p>If you did not request this, you can ignore this email.</p>"
+            "</body></html>"
+        ),
+    )
 
 @router.post("/login", response_model=TokenResponse | MfaChallengeResponse)
 def login(
@@ -313,3 +359,100 @@ def logout(data: RefreshRequest, db: Session = Depends(get_db)):
     session = require_live_session(db, payload, user, lock=True)
     session.revoked_at = datetime.now(timezone.utc)
     db.commit()
+
+@router.post(
+    "/email-verification/resend",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def resend_email_verification(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = db.execute(
+        select(User)
+        .where(User.id == current_user.id)
+        .with_for_update()
+    ).scalar_one()
+
+    target_email = user.pending_email or (
+        user.email if user.email_verified_at is None else None
+    )
+
+    identifier = target_email or str(user.uuid)
+
+    enforce_email_verification_rate_limit(
+        request,
+        action="issue",
+        identifier=identifier,
+    )
+
+    if not target_email:
+        return {
+            "message": "There is no unverified email address to verify."
+        }
+
+    try:
+        raw_token, recipient = issue_email_verification_token(db, user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    try:
+        _send_verification_email(recipient, raw_token)
+    except EmailDeliveryError:
+        logger.error(
+            "Email verification delivery failed for user UUID %s.",
+            user.uuid,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email delivery is temporarily unavailable. Please try again later.",
+        ) from None
+
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "message": "If an unverified email address exists, a verification email has been sent."
+    }
+
+@router.post(
+    "/email-verification/verify",
+    status_code=status.HTTP_200_OK,
+)
+def verify_email_address(
+    data: EmailVerificationRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    enforce_email_verification_rate_limit(
+        request,
+        action="verify",
+        identifier=data.token,
+    )
+
+    success = verify_email_token(
+        db,
+        data.token,
+        ip_address=get_client_address(request),
+        user_agent=request.headers.get("user-agent", "")[:500] or None,
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_EMAIL_VERIFICATION_INVALID,
+        )
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+    return {"message": _EMAIL_VERIFICATION_SUCCESS}

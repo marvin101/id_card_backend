@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.models.user_school_access import UserSchoolAccess
+    from app.models.email_verification_token import EmailVerificationToken
 
 class User(Base):
     __tablename__ = "users"
@@ -59,6 +60,16 @@ class User(Base):
     )
 
     email: Mapped[str | None] = mapped_column(
+        String(150),
+        nullable=True,
+    )
+
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    pending_email: Mapped[str | None] = mapped_column(
         String(150),
         nullable=True,
     )
@@ -147,5 +158,11 @@ class User(Base):
         "UserSchoolAccess",
         back_populates="user",
         foreign_keys="UserSchoolAccess.user_id",
+        cascade="all, delete-orphan",
+    )
+
+    email_verification_tokens: Mapped[list["EmailVerificationToken"]] = relationship(
+        "EmailVerificationToken",
+        back_populates="user",
         cascade="all, delete-orphan",
     )

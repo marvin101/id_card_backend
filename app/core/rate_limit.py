@@ -6,6 +6,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from ipaddress import ip_address
 import logging
+import hashlib
 from math import ceil
 from threading import Lock
 from time import monotonic
@@ -69,6 +70,7 @@ auth_rate_limiter = InMemoryRateLimiter()
 public_form_rate_limiter = InMemoryRateLimiter()
 public_design_rate_limiter = InMemoryRateLimiter()
 public_verification_rate_limiter = InMemoryRateLimiter()
+email_verification_rate_limiter = InMemoryRateLimiter()
 
 
 def _normalized_ip(value: str | None) -> str | None:
@@ -193,3 +195,62 @@ def enforce_public_verification_rate_limit(request: Request) -> None:
 
 def enforce_refresh_rate_limit(request: Request) -> None:
     _enforce(request, bucket="refresh", limit=settings.refresh_rate_limit_requests)
+
+def enforce_email_verification_rate_limit(
+    request: Request,
+    *,
+    action: str,
+    identifier: str,
+) -> None:
+    """
+    Rate-limit email verification issuance and token verification.
+
+    The identifier is hashed before being used in limiter keys so that
+    email addresses and raw verification tokens are not retained there.
+    """
+
+    if not settings.auth_rate_limit_enabled:
+        return
+
+    if action not in {"issue", "verify"}:
+        raise ValueError("Unsupported email verification action.")
+
+    normalized_identifier = identifier.strip().casefold()
+
+    if not normalized_identifier:
+        raise ValueError("An identifier is required.")
+
+    identifier_hash = hashlib.sha256(
+        normalized_identifier.encode("utf-8")
+    ).hexdigest()
+
+    address = get_client_address(request)
+
+    if action == "issue":
+        limit = settings.email_verification_issue_rate_limit_requests
+    else:
+        limit = settings.email_verification_verify_rate_limit_requests
+
+    window = settings.email_verification_rate_limit_window_seconds
+
+    # Apply both an IP-level limit and an identifier-level limit.
+    keys = (
+        f"email-verification:{action}:ip:{address}",
+        f"email-verification:{action}:identifier:{identifier_hash}",
+    )
+
+    for key in keys:
+        decision = email_verification_rate_limiter.check(
+            key,
+            limit=limit,
+            window_seconds=window,
+        )
+
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+                headers={
+                    "Retry-After": str(decision.retry_after)
+                },
+            )

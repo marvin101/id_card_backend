@@ -8,6 +8,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from uuid import UUID
+from html import escape
+
+from app.core.email import send_email, EmailDeliveryError
+from app.core.email_verification import issue_email_verification_token
+from app.core.email_claims import (
+    EmailClaimConflict,
+    normalize_email,
+    reserve_current_email,
+    reserve_pending_email,
+    release_pending_email,
+    release_email_claims,
+)
+from app.models.email_verification_token import EmailVerificationToken
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limit import enforce_registration_rate_limit
 from app.core.auth_sessions import revoke_user_sessions
@@ -97,6 +111,8 @@ def _self_profile_response(db: Session, user: User) -> SelfProfileResponse:
         username=user.username,
         full_name=user.full_name,
         email=user.email,
+        email_verified=user.email_verified_at is not None,
+        pending_email=user.pending_email,
         mobile=user.mobile,
         designation=user.designation,
         platform_role=user.platform_role,
@@ -573,10 +589,6 @@ def register_user(
     _: None = Depends(enforce_registration_rate_limit),
     db: Session = Depends(get_db),
 ):
-    # ------------------------------------------------------
-    # Check whether username already exists
-    # ------------------------------------------------------
-
     existing_user = db.scalar(
         select(User).where(User.username == user_data.username)
     )
@@ -587,32 +599,118 @@ def register_user(
             detail="Username already exists.",
         )
 
+    if user_data.email:
+        _check_account_identity(db, email=user_data.email)
+
     school = _resolve_registration_school(db, user_data)
 
     user = User(
         username=user_data.username,
         password_hash=hash_password(user_data.password),
         full_name=user_data.full_name,
-        email=user_data.email,
+        email=(
+            normalize_email(user_data.email)
+            if user_data.email
+            else None
+        ),
+        email_verified_at=None,
+        pending_email=None,
         mobile=user_data.mobile,
         designation=user_data.designation.strip(),
         platform_role=None,
     )
 
-    db.add(user)
-    db.flush()
-    db.add(
-        SchoolAccessRequest(
-            user_id=user.id,
-            school_id=school.id,
-            status="pending",
+    raw_token = None
+    recipient = None
+
+    try:
+        db.add(user)
+        db.flush()
+        if user.email:
+            reserve_current_email(
+                db,
+                user.id,
+                user.email,
+            )
+        db.add(
+            SchoolAccessRequest(
+                user_id=user.id,
+                school_id=school.id,
+                status="pending",
+            )
         )
-    )
-    db.commit()
-    db.refresh(user)
+
+        if user.email:
+            raw_token, recipient = issue_email_verification_token(
+                db,
+                user,
+            )
+
+        db.commit()
+        db.refresh(user)
+
+    except EmailClaimConflict as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from None
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email already exists.",
+        ) from None
+
+    except Exception:
+        db.rollback()
+        raise
+
+    # SMTP delivery happens after the account transaction commits.
+    if raw_token and recipient:
+        try:
+            _send_registration_verification_email(
+                recipient,
+                raw_token,
+            )
+        except EmailDeliveryError:
+            logger.error(
+                "Registration verification email delivery failed for user UUID %s.",
+                user.uuid,
+            )
 
     return user
+def _send_registration_verification_email(
+    recipient: str,
+    raw_token: str,
+) -> None:
+    verification_url = (
+        f"{settings.public_app_url.rstrip('/')}"
+        f"/verify-email/{raw_token}"
+    )
 
+    send_email(
+        recipient=recipient,
+        subject="Verify your CampusID email address",
+        text_body=(
+            "Hello,\n\n"
+            "Thank you for registering with CampusID.\n\n"
+            "Verify your email address using this link:\n\n"
+            f"{verification_url}\n\n"
+            "This link expires in 30 minutes and can only be used once.\n\n"
+            "If you did not register, you can ignore this email."
+        ),
+        html_body=(
+            "<html><body>"
+            "<h2>Welcome to CampusID</h2>"
+            "<p>Please verify your email address.</p>"
+            f'<p><a href="{escape(verification_url, quote=True)}">'
+            "Verify email</a></p>"
+            "<p>This link expires in 30 minutes.</p>"
+            "</body></html>"
+        ),
+    )
 
 @router.get(
     "/me",
@@ -628,25 +726,138 @@ def get_my_profile(
 @router.patch("/me", response_model=SelfProfileResponse)
 def update_my_profile(
     data: SelfProfileUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     values = data.model_dump(exclude_unset=True)
-    _check_account_identity(
-        db,
-        username=values.get("username"),
-        email=values.get("email"),
-        exclude_id=current_user.id,
-    )
-    for field, value in values.items():
-        setattr(current_user, field, value)
+    raw_token = None
+    verification_recipient = None
+
     try:
+        # Serialize email changes and token issuance for this account.
+        user = db.execute(
+            select(User).where(User.id == current_user.id).with_for_update()
+        ).scalar_one()
+
+        username = values.get("username")
+        if username is not None and username != user.username:
+            _check_account_identity(db, username=username, exclude_id=user.id)
+            user.username = username
+
+        for field in ("full_name", "mobile"):
+            if field in values:
+                setattr(user, field, values[field])
+
+        if "email" in values:
+            requested_email = values["email"]
+            normalized_requested = (
+                normalize_email(requested_email) if requested_email else None
+            )
+            current_email = normalize_email(user.email) if user.email else None
+            pending_email = normalize_email(user.pending_email) if user.pending_email else None
+
+            if normalized_requested is None:
+                # Explicitly clearing email releases both current and pending claims.
+                if user.email or user.pending_email:
+                    release_email_claims(db, user.id)
+                    user.email = None
+                    user.pending_email = None
+                    user.email_verified_at = None
+                    now = datetime.now(timezone.utc)
+                    db.execute(
+                        update(EmailVerificationToken)
+                        .where(
+                            EmailVerificationToken.user_id == user.id,
+                            EmailVerificationToken.used_at.is_(None),
+                        )
+                        .values(used_at=now)
+                    )
+
+            elif normalized_requested == pending_email:
+                # Same pending address: do not rotate tokens or send duplicate mail.
+                pass
+
+            elif normalized_requested == current_email:
+                # Reverting to the active address cancels any outstanding change.
+                if user.pending_email:
+                    release_pending_email(db, user.id)
+                    user.pending_email = None
+                    now = datetime.now(timezone.utc)
+                    db.execute(
+                        update(EmailVerificationToken)
+                        .where(
+                            EmailVerificationToken.user_id == user.id,
+                            EmailVerificationToken.used_at.is_(None),
+                        )
+                        .values(used_at=now)
+                    )
+
+            else:
+                _check_account_identity(
+                    db, email=normalized_requested, exclude_id=user.id
+                )
+                reserve_pending_email(db, user, normalized_requested)
+                user.pending_email = normalized_requested
+                raw_token, verification_recipient = issue_email_verification_token(
+                    db, user
+                )
+
         db.commit()
-        db.refresh(current_user)
+        db.refresh(user)
+
+    except EmailClaimConflict as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Username or email already exists") from None
-    return _self_profile_response(db, current_user)
+    except Exception:
+        db.rollback()
+        raise
+
+    # Send only after the database transaction commits. A failed delivery leaves
+    # the pending address and token intact so the authenticated resend endpoint
+    # can issue a fresh verification message.
+    if raw_token and verification_recipient:
+        try:
+            _send_email_change_verification_email(
+                verification_recipient, raw_token
+            )
+        except EmailDeliveryError:
+            logger.error(
+                "Email-change verification delivery failed for user UUID %s.",
+                user.uuid,
+            )
+
+    return _self_profile_response(db, user)
+
+
+def _send_email_change_verification_email(
+    recipient: str,
+    raw_token: str,
+) -> None:
+    verification_url = (
+        f"{settings.public_app_url.rstrip('/')}"
+        f"/verify-email/{raw_token}"
+    )
+    send_email(
+        recipient=recipient,
+        subject="Verify your new CampusID email address",
+        text_body=(
+            "A request was made to change the email address on your CampusID account.\n\n"
+            "Verify the new address using this link:\n\n"
+            f"{verification_url}\n\n"
+            "This link expires in 30 minutes and can only be used once.\n\n"
+            "If you did not request this change, you can ignore this email."
+        ),
+        html_body=(
+            "<html><body><h2>Verify your new CampusID email</h2>"
+            "<p>Confirm the new email address for your CampusID account.</p>"
+            f'<p><a href="{escape(verification_url, quote=True)}">Verify email</a></p>'
+            "<p>This link expires in 30 minutes.</p></body></html>"
+        ),
+    )
 
 
 @router.post("/me/profile-photo", response_model=SelfProfileResponse)
@@ -1392,7 +1603,14 @@ def _check_account_identity(db, username=None, email=None, exclude_id=None):
         local, separator, domain = email.rpartition("@")
         if not separator or not local or "." not in domain:
             raise HTTPException(422, "Enter a valid email address")
-        conditions.append(func.lower(User.email) == email.lower())
+        normalized_email = normalize_email(email)
+
+        conditions.append(
+            or_(
+                func.lower(User.email) == normalized_email,
+                func.lower(User.pending_email) == normalized_email,
+            )
+        )
     if conditions:
         query = select(User).where(or_(*conditions))
         if exclude_id is not None:
@@ -1402,73 +1620,223 @@ def _check_account_identity(db, username=None, email=None, exclude_id=None):
 
 
 @router.post("/accounts", response_model=UserResponse, status_code=201)
-def create_account(data: AdminUserCreate, db: Session = Depends(get_db),
-                   current_user: User = Depends(get_current_user)):
+def create_account(
+    data: AdminUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     require_platform_admin(current_user)
-    _check_account_identity(db, data.username, data.email)
-    values = data.model_dump(exclude={"password"})
+    normalized_email = normalize_email(data.email) if data.email else None
+    _check_account_identity(db, data.username, normalized_email)
+
+    values = data.model_dump(exclude={"password", "email"})
     values["full_name"] = values["full_name"].strip()
     if not values["full_name"]:
         raise HTTPException(422, "Full name cannot be empty")
+
     user = User(
         **values,
+        email=normalized_email,
+        email_verified_at=None,
+        pending_email=None,
         password_hash=hash_password(data.password),
         is_active=True,
         is_platform_admin=data.platform_role == "platform_admin",
     )
-    db.add(user)
+    raw_token = None
+    recipient = None
+
     try:
+        db.add(user)
+        db.flush()
+        if normalized_email:
+            reserve_current_email(db, user.id, normalized_email)
+            raw_token, recipient = issue_email_verification_token(db, user)
         db.commit()
         db.refresh(user)
+    except EmailClaimConflict as exc:
+        db.rollback()
+        raise HTTPException(409, detail=str(exc)) from None
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Username or email already exists") from None
+    except Exception:
+        db.rollback()
+        raise
+
+    if raw_token and recipient:
+        try:
+            _send_admin_account_verification_email(recipient, raw_token)
+        except EmailDeliveryError:
+            logger.error(
+                "Administrator-created account verification email delivery failed "
+                "for user UUID %s.",
+                user.uuid,
+            )
     return user
 
 
 @router.patch("/{user_uuid}/account", response_model=UserResponse)
-def update_account(user_uuid: UUID, data: AdminUserUpdate, db: Session = Depends(get_db),
-                   current_user: User = Depends(get_current_user)):
+def update_account(
+    user_uuid: UUID,
+    data: AdminUserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     require_platform_admin(current_user)
     # Lock critical administrators in a stable order before the target. This
     # serializes concurrent demotions/deactivations and protects the last admin.
-    admins = db.execute(select(User).where(User.is_active.is_(True),
-        or_(User.platform_role == "platform_admin", User.is_platform_admin.is_(True)))
-        .order_by(User.id).with_for_update()).scalars().all()
-    user = db.execute(select(User).where(User.uuid == user_uuid).with_for_update()).scalar_one_or_none()
+    admins = db.execute(
+        select(User)
+        .where(
+            User.is_active.is_(True),
+            or_(User.platform_role == "platform_admin", User.is_platform_admin.is_(True)),
+        )
+        .order_by(User.id)
+        .with_for_update()
+    ).scalars().all()
+    user = db.execute(
+        select(User).where(User.uuid == user_uuid).with_for_update()
+    ).scalar_one_or_none()
     if user is None:
         raise HTTPException(404, "User not found")
+
     values = data.model_dump(exclude_unset=True)
-    loses_admin = values.get("is_active") is False or ("platform_role" in values and values["platform_role"] is None)
+    loses_admin = (
+        values.get("is_active") is False
+        or ("platform_role" in values and values["platform_role"] is None)
+    )
     if user.is_active and is_platform_admin(user) and loses_admin and len(admins) <= 1:
         raise HTTPException(409, "The last active platform administrator must be retained")
-    if current_user.id == user.id and (values.get("is_active") is False or "platform_role" in values):
+    if current_user.id == user.id and (
+        values.get("is_active") is False or "platform_role" in values
+    ):
         raise HTTPException(409, "You cannot deactivate yourself or change your own platform role")
-    _check_account_identity(db, email=values.get("email"), exclude_id=user.id)
-    if "password" in values:
-        user.password_hash = hash_password(values.pop("password"))
 
-        now = datetime.now(timezone.utc)
+    raw_token = None
+    verification_recipient = None
 
-        db.execute(
-            update(TrustedDevice)
-            .where(
-                TrustedDevice.user_id == user.id,
-                TrustedDevice.revoked_at.is_(None),
-            )
-            .values(revoked_at=now)
-        )
-    if "platform_role" in values:
-        user.is_platform_admin = values["platform_role"] == "platform_admin"
-    for name, value in values.items():
-        setattr(user, name, value.strip() if isinstance(value, str) else value)
-    if "is_active" in data.model_fields_set or "password" in data.model_fields_set:
-        from app.core.auth_sessions import revoke_user_sessions
-        revoke_user_sessions(db, user.id)
     try:
+        if "email" in values:
+            requested_email = values.pop("email")
+            normalized_requested = (
+                normalize_email(requested_email) if requested_email else None
+            )
+            current_email = normalize_email(user.email) if user.email else None
+            pending_email = (
+                normalize_email(user.pending_email) if user.pending_email else None
+            )
+
+            if normalized_requested is None:
+                if user.email or user.pending_email:
+                    release_email_claims(db, user.id)
+                    user.email = None
+                    user.pending_email = None
+                    user.email_verified_at = None
+                    now = datetime.now(timezone.utc)
+                    db.execute(
+                        update(EmailVerificationToken)
+                        .where(
+                            EmailVerificationToken.user_id == user.id,
+                            EmailVerificationToken.used_at.is_(None),
+                        )
+                        .values(used_at=now)
+                    )
+            elif normalized_requested == pending_email:
+                # Do not rotate a valid token for an unchanged pending address.
+                pass
+            elif normalized_requested == current_email:
+                # Selecting the active address cancels any outstanding change.
+                if user.pending_email:
+                    release_pending_email(db, user.id)
+                    user.pending_email = None
+                    now = datetime.now(timezone.utc)
+                    db.execute(
+                        update(EmailVerificationToken)
+                        .where(
+                            EmailVerificationToken.user_id == user.id,
+                            EmailVerificationToken.used_at.is_(None),
+                        )
+                        .values(used_at=now)
+                    )
+            else:
+                _check_account_identity(
+                    db, email=normalized_requested, exclude_id=user.id
+                )
+                reserve_pending_email(db, user, normalized_requested)
+                user.pending_email = normalized_requested
+                raw_token, verification_recipient = issue_email_verification_token(
+                    db, user
+                )
+
+        if "password" in values:
+            user.password_hash = hash_password(values.pop("password"))
+            now = datetime.now(timezone.utc)
+            db.execute(
+                update(TrustedDevice)
+                .where(
+                    TrustedDevice.user_id == user.id,
+                    TrustedDevice.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+
+        if "platform_role" in values:
+            user.is_platform_admin = values["platform_role"] == "platform_admin"
+        for name, value in values.items():
+            setattr(user, name, value.strip() if isinstance(value, str) else value)
+
+        if "is_active" in data.model_fields_set or "password" in data.model_fields_set:
+            revoke_user_sessions(db, user.id)
+
         db.commit()
         db.refresh(user)
+    except EmailClaimConflict as exc:
+        db.rollback()
+        raise HTTPException(409, detail=str(exc)) from None
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Username or email already exists") from None
+    except Exception:
+        db.rollback()
+        raise
+
+    if raw_token and verification_recipient:
+        try:
+            _send_email_change_verification_email(
+                verification_recipient, raw_token
+            )
+        except EmailDeliveryError:
+            logger.error(
+                "Administrator-requested email-change verification delivery failed "
+                "for user UUID %s.",
+                user.uuid,
+            )
     return user
+
+
+def _send_admin_account_verification_email(
+    recipient: str,
+    raw_token: str,
+) -> None:
+    verification_url = (
+        f"{settings.public_app_url.rstrip('/')}/verify-email/{raw_token}"
+    )
+    send_email(
+        recipient=recipient,
+        subject="Verify your CampusID email address",
+        text_body=(
+            "A CampusID account has been created for you by an administrator.\n\n"
+            "Verify this email address using the link below:\n\n"
+            f"{verification_url}\n\n"
+            "This link expires in 30 minutes and can only be used once.\n\n"
+            "If you were not expecting this account, you can ignore this email."
+        ),
+        html_body=(
+            "<html><body><h2>Verify your CampusID email</h2>"
+            "<p>An administrator created a CampusID account for you.</p>"
+            f'<p><a href="{escape(verification_url, quote=True)}">Verify email</a></p>'
+            "<p>This link expires in 30 minutes.</p></body></html>"
+        ),
+    )
+
