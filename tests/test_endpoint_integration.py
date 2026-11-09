@@ -132,6 +132,8 @@ def _user(*, username="operator", active=True):
         last_login=None,
         created_at=now,
         updated_at=now,
+        email_verified_at=None,
+        pending_email=None,
     )
 
 

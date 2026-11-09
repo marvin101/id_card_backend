@@ -139,6 +139,8 @@ def _user(**overrides):
         "password_hash": hash_password("old-password"),
         "full_name": "Profile User",
         "email": "profile@example.com",
+        "email_verified_at": None,
+        "pending_email": None,
         "mobile": None,
         "designation": "Teacher",
         "platform_role": None,
@@ -197,7 +199,7 @@ def test_self_profile_rejects_unauthenticated_requests():
     assert response.status_code in {401, 403}
 
 
-def test_patch_updates_editable_profile_fields_and_preserves_other_user():
+def test_patch_updates_non_email_profile_fields_and_preserves_email_pending_verification():
     user = _user()
     other_user = _user(id=2, username="other", full_name="Other User")
     session = _ProfileSession(user)
@@ -207,7 +209,6 @@ def test_patch_updates_editable_profile_fields_and_preserves_other_user():
             json={
                 "username": "  updated-user  ",
                 "full_name": "  Updated Name  ",
-                "email": " updated@example.com ",
                 "mobile": " +44 20 1234 5678 ",
             },
         )
@@ -215,7 +216,9 @@ def test_patch_updates_editable_profile_fields_and_preserves_other_user():
     assert response.status_code == 200
     assert response.json()["username"] == "updated-user"
     assert response.json()["full_name"] == "Updated Name"
-    assert response.json()["email"] == "updated@example.com"
+    assert response.json()["email"] == "profile@example.com"
+    assert response.json()["email_verified"] is False
+    assert response.json()["pending_email"] is None
     assert response.json()["mobile"] == "+44 20 1234 5678"
     assert user.full_name == "Updated Name"
     assert other_user.full_name == "Other User"

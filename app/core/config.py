@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_secret_key: str
 
+    # SMTP Email Delivery (Brevo)
+    smtp_host: str = "smtp-relay.brevo.com"
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@campusid.co.in"
+    smtp_from_name: str = "CampusID"
+    smtp_use_starttls: bool = True
+    smtp_timeout_seconds: int = Field(default=15, ge=1, le=60)
+
     # CORS
     cors_origins: str = (
         "http://localhost:49567,"
@@ -43,6 +53,17 @@ class Settings(BaseSettings):
     public_design_get_rate_limit_requests: int = Field(default=60, ge=1)
     public_verification_get_rate_limit_requests: int = Field(default=120, ge=1)
     public_form_max_request_bytes: int = Field(default=7 * 1024 * 1024, ge=1024)
+    
+        # Email verification throttling
+    email_verification_rate_limit_window_seconds: int = Field(
+        default=900, ge=1
+    )
+    email_verification_issue_rate_limit_requests: int = Field(
+        default=3, ge=1
+    )
+    email_verification_verify_rate_limit_requests: int = Field(
+        default=20, ge=1
+    )
 
     # Public web origin used in revocable student-verification QR links.
     public_app_url: str = "https://campusid.co.in"

@@ -23,6 +23,9 @@ from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.bulk_photo_import import BulkPhotoImport
 from app.models.public_form import PublicForm, PublicFormSubmission
 from app.models.security_event import SecurityEvent
+from app.models.email_verification_token import EmailVerificationToken
+from app.models.trusted_device import TrustedDevice
+from app.models.email_claim import EmailClaim
 
 __all__ = [
     "AuthSession",
@@ -50,6 +53,8 @@ __all__ = [
     "PublicForm",
     "PublicFormSubmission",
     "SecurityEvent",
+    "EmailVerificationToken",
+    "EmailClaim",
 ]
 
-from app.models.trusted_device import TrustedDevice
+

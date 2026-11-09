@@ -22,6 +22,8 @@ from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.security_event import SecurityEvent
 from app.models.trusted_device import TrustedDevice
+from app.models.email_verification_token import EmailVerificationToken
+from app.models.email_claim import EmailClaim
 
 
 @pytest.fixture
@@ -29,7 +31,7 @@ def journey():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.connect() as conn:
         conn.connection.create_function("gen_random_uuid", 0, lambda: uuid4().hex)
-    for model in (User, School, AuthSession, TrustedDevice, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode, SecurityEvent):
+    for model in (User, School, AuthSession, TrustedDevice, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode, SecurityEvent, EmailVerificationToken, EmailClaim,):
         model.__table__.create(engine)
     db = Session(engine, expire_on_commit=False)
     user = User(uuid=uuid4(), username="platform", full_name="Platform Admin", password_hash=hash_password("password123"),
@@ -325,3 +327,146 @@ def test_revoke_individual_session_invalidates_that_session_and_logs_event(journ
         )
     ).scalar_one()
     assert event.details["revoked_session_id"] == first_session["session_id"]
+
+
+def test_admin_created_account_reserves_email_and_sends_hashed_verification_token(
+    journey, monkeypatch
+):
+    from hashlib import sha256
+    from app.api import users as users_api
+
+    sent = []
+    monkeypatch.setattr(users_api, "send_email", lambda **kwargs: sent.append(kwargs))
+
+    client, db, _, _, _ = journey
+    admin_headers = headers(login(client)["access_token"])
+    response = client.post(
+        "/users/accounts",
+        json={
+            "username": "admin-created",
+            "full_name": "Admin Created",
+            "password": "password123",
+            "email": "New.User@example.test",
+        },
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 201
+    created_user = db.execute(
+        select(User).where(User.username == "admin-created")
+    ).scalar_one()
+    assert created_user.email == "new.user@example.test"
+    assert created_user.email_verified_at is None
+    assert created_user.pending_email is None
+
+    claim = db.get(EmailClaim, "new.user@example.test")
+    assert claim is not None
+    assert claim.user_id == created_user.id
+    assert claim.claim_type == "current"
+
+    verification = db.execute(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == created_user.id
+        )
+    ).scalar_one()
+    assert verification.email == "new.user@example.test"
+    assert verification.used_at is None
+    assert verification.expires_at > verification.created_at
+
+    assert len(sent) == 1
+    assert sent[0]["recipient"] == "new.user@example.test"
+    assert "/verify-email/" in sent[0]["text_body"]
+    raw_token = sent[0]["text_body"].split("/verify-email/", 1)[1].split()[0]
+    assert verification.token_hash == sha256(raw_token.encode()).hexdigest()
+    assert raw_token not in verification.token_hash
+
+
+def test_admin_email_change_keeps_current_email_until_new_address_is_verified(
+    journey, monkeypatch
+):
+    from app.api import users as users_api
+
+    sent = []
+    monkeypatch.setattr(users_api, "send_email", lambda **kwargs: sent.append(kwargs))
+
+    client, db, _, user, _ = journey
+    user.email = "worker@example.test"
+    user.email_verified_at = datetime.now(timezone.utc)
+    from app.core.email_claims import reserve_current_email
+    reserve_current_email(db, user.id, user.email)
+    db.commit()
+
+    admin_headers = headers(login(client)["access_token"])
+    response = client.patch(
+        f"/users/{user.uuid}/account",
+        json={"email": "Replacement@example.test"},
+        headers=admin_headers,
+    )
+
+    assert response.status_code == 200
+    db.refresh(user)
+    assert user.email == "worker@example.test"
+    assert user.pending_email == "replacement@example.test"
+    assert user.email_verified_at is not None
+
+    current_claim = db.get(EmailClaim, "worker@example.test")
+    pending_claim = db.get(EmailClaim, "replacement@example.test")
+    assert current_claim is not None and current_claim.claim_type == "current"
+    assert pending_claim is not None
+    assert pending_claim.user_id == user.id
+    assert pending_claim.claim_type == "pending"
+
+    verification = db.execute(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+        )
+    ).scalar_one()
+    assert verification.email == "replacement@example.test"
+    assert len(sent) == 1
+    assert sent[0]["recipient"] == "replacement@example.test"
+
+
+def test_admin_reverting_email_change_releases_pending_claim_and_invalidates_token(
+    journey, monkeypatch
+):
+    from app.api import users as users_api
+    from app.core.email_claims import reserve_current_email
+
+    monkeypatch.setattr(users_api, "send_email", lambda **kwargs: None)
+
+    client, db, _, user, _ = journey
+    user.email = "worker@example.test"
+    user.email_verified_at = datetime.now(timezone.utc)
+    reserve_current_email(db, user.id, user.email)
+    db.commit()
+
+    admin_headers = headers(login(client)["access_token"])
+    changed = client.patch(
+        f"/users/{user.uuid}/account",
+        json={"email": "replacement@example.test"},
+        headers=admin_headers,
+    )
+    assert changed.status_code == 200
+
+    outstanding = db.execute(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+        )
+    ).scalar_one()
+
+    reverted = client.patch(
+        f"/users/{user.uuid}/account",
+        json={"email": "WORKER@example.test"},
+        headers=admin_headers,
+    )
+    assert reverted.status_code == 200
+
+    db.refresh(user)
+    db.refresh(outstanding)
+    assert user.email == "worker@example.test"
+    assert user.pending_email is None
+    assert db.get(EmailClaim, "worker@example.test").claim_type == "current"
+    assert db.get(EmailClaim, "replacement@example.test") is None
+    assert outstanding.used_at is not None

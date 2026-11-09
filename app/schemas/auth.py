@@ -49,6 +49,8 @@ class SelfProfileSchool(BaseModel):
 
 
 class SelfProfileResponse(UserResponse):
+    email_verified: bool = False
+    pending_email: str | None = None
     profile_photo_url: str | None = None
     last_login: datetime | None = None
     created_at: datetime
@@ -147,7 +149,7 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=8, max_length=200)
     full_name: str = Field(min_length=1, max_length=150)
-    email: str | None = None
+    email: str | None = Field(default=None, max_length=150)
     mobile: str | None = None
     designation: str = Field(min_length=1, max_length=100)
     school_uuid: UUID | None = None
@@ -160,6 +162,16 @@ class UserCreate(BaseModel):
         if self.school_uuid is None and self.school_name is None:
             raise ValueError("Select a school.")
         return self
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, value):
+            return _normalize_optional_text(value)
+
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value):
+        return _validate_optional_email(value)
 
 
 class RefreshRequest(BaseModel):
@@ -297,3 +309,8 @@ class TrustedDeviceResponse(BaseModel):
 
 class TrustedDeviceListResponse(BaseModel):
     devices: list[TrustedDeviceResponse] = Field(default_factory=list)
+
+class EmailVerificationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    token: str = Field(min_length=20, max_length=256)
