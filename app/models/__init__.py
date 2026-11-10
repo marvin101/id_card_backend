@@ -55,6 +55,9 @@ __all__ = [
     "SecurityEvent",
     "EmailVerificationToken",
     "EmailClaim",
+    "PasswordResetToken",
 ]
 
 
+
+from app.models.password_reset_token import PasswordResetToken
