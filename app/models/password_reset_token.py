@@ -3,7 +3,7 @@
 Only SHA-256 digests of the random bearer tokens are persisted.
 """
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -23,6 +23,9 @@ class PasswordResetToken(Base):
     id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True).with_variant(PGUUID(as_uuid=True), "postgresql"),
         primary_key=True,
+        # Client-side UUID keeps SQLite's CHAR(32) representation consistent
+        # with SQLAlchemy's Uuid type; PostgreSQL retains its server default.
+        default=uuid4,
         server_default=func.gen_random_uuid(),
     )
 

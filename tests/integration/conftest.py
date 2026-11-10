@@ -17,6 +17,7 @@ REQUIRED_TABLES = {
     "email_claims",
     "email_verification_tokens",
     "security_events",
+    "password_reset_tokens",
 }
 
 

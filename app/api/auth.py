@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.auth_sessions import (
@@ -17,9 +17,14 @@ from app.core.auth_sessions import (
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.mfa import decrypt_totp_secret, hash_recovery_code, matching_totp_counter
-from app.core.rate_limit import enforce_login_rate_limit, enforce_refresh_rate_limit, enforce_email_verification_rate_limit, get_client_address
+from app.core.rate_limit import (
+    enforce_login_rate_limit, enforce_refresh_rate_limit,
+    enforce_email_verification_rate_limit, enforce_password_reset_rate_limit,
+    get_client_address,
+)
 from app.core.security import verify_password, get_current_user
 from app.models.security_event import SecurityEvent
+from app.models.password_reset_token import PasswordResetToken
 from app.models.trusted_device import TrustedDevice
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
 from app.models.user_mfa_secret import UserMfaSecret
@@ -28,10 +33,14 @@ from app.models.users import User
 from app.schemas.auth import (
     LoginRequest, MfaChallengeResponse, MfaChallengeVerifyRequest,
     RefreshRequest, TokenResponse, EmailVerificationRequest,
+    PasswordResetRequest, PasswordResetConfirmRequest,
 )
 from html import escape
 
 from app.core.email import send_email, EmailDeliveryError
+from app.core.password_reset import (
+    issue_password_reset_token, consume_password_reset_token,
+)
 from app.core.email_verification import (
     issue_email_verification_token,
     verify_email_token,
@@ -160,6 +169,134 @@ def _send_verification_email(
         ),
     )
 
+_PASSWORD_RESET_GENERIC_MESSAGE = (
+    "If an eligible account exists for that email address, "
+    "a password reset link will be sent."
+)
+_PASSWORD_RESET_INVALID = "This password reset link is invalid or has expired. Request a new link."
+
+
+def _send_password_reset_email(recipient: str, raw_token: str) -> None:
+    reset_url = (
+        f"{settings.public_app_url.rstrip('/')}"
+        f"/reset-password/{raw_token}"
+    )
+    send_email(
+        recipient=recipient,
+        subject="Reset your CampusID password",
+        text_body=(
+            "Hello,\n\n"
+            "We received a request to reset your CampusID password. "
+            "Open this link to choose a new password:\n\n"
+            f"{reset_url}\n\n"
+            "This link expires in 30 minutes and can only be used once. "
+            "All existing sessions and trusted devices will be signed out "
+            "after a successful reset.\n\n"
+            "If you did not request this, you can ignore this email."
+        ),
+        html_body=(
+            "<html><body><h2>Reset your CampusID password</h2>"
+            "<p>We received a request to reset your password.</p>"
+            f'<p><a href="{escape(reset_url, quote=True)}">Reset password</a></p>'
+            "<p>This link expires in 30 minutes and can only be used once.</p>"
+            "<p>All existing sessions and trusted devices will be signed out "
+            "after a successful reset.</p>"
+            "<p>If you did not request this, you can ignore this email.</p>"
+            "</body></html>"
+        ),
+    )
+
+
+@router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
+def request_password_reset(
+    data: PasswordResetRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    enforce_password_reset_rate_limit(
+        request, action="request", identifier=data.email
+    )
+    user = db.execute(
+        select(User).where(func.lower(User.email) == data.email).with_for_update()
+    ).scalar_one_or_none()
+
+    # Never disclose whether an account exists or whether its email is verified.
+    if (user is not None and user.email and user.is_active
+            and user.email_verified_at is not None):
+        try:
+            raw_token = issue_password_reset_token(db, user)
+            db.add(SecurityEvent(
+                user_id=user.id,
+                event_type="password_reset_requested",
+                ip_address=get_client_address(request),
+                user_agent=request.headers.get("user-agent", "")[:500] or None,
+                details={"delivery_requested": True},
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        try:
+            _send_password_reset_email(user.email, raw_token)
+        except EmailDeliveryError:
+            # Do not reveal delivery or account state. Invalidate the token so
+            # an undelivered link cannot remain valid if logs leak it later.
+            db.execute(
+                update(PasswordResetToken)
+                .where(
+                    PasswordResetToken.token_hash == sha256(raw_token.encode("utf-8")).hexdigest(),
+                    PasswordResetToken.used_at.is_(None),
+                )
+                .values(used_at=datetime.now(timezone.utc))
+            )
+            db.add(SecurityEvent(
+                user_id=user.id,
+                event_type="password_reset_email_delivery_failed",
+                ip_address=get_client_address(request),
+                user_agent=request.headers.get("user-agent", "")[:500] or None,
+                details={"delivery_requested": True},
+            ))
+            db.commit()
+            logger.error("Password reset email delivery failed for user UUID %s.", user.uuid)
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return {"message": _PASSWORD_RESET_GENERIC_MESSAGE}
+
+
+@router.post("/password-reset/confirm", status_code=status.HTTP_200_OK)
+def confirm_password_reset(
+    data: PasswordResetConfirmRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    enforce_password_reset_rate_limit(
+        request, action="confirm", identifier=data.token
+    )
+    success = consume_password_reset_token(
+        db,
+        data.token,
+        data.new_password,
+        ip_address=get_client_address(request),
+        user_agent=request.headers.get("user-agent", "")[:500] or None,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_PASSWORD_RESET_INVALID,
+        )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return {"message": "Your password has been reset. Sign in with your new password."}
+
+
 @router.post("/login", response_model=TokenResponse | MfaChallengeResponse)
 def login(
     login_data: LoginRequest,
@@ -167,7 +304,9 @@ def login(
     _: None = Depends(enforce_login_rate_limit),
     db: Session = Depends(get_db),
 ):
-    user = db.execute(select(User).where(User.username == login_data.username)).scalar_one_or_none()
+    user = db.execute(
+        select(User).where(User.username == login_data.username).with_for_update()
+    ).scalar_one_or_none()
     if user is None or not verify_password(login_data.password, user.password_hash):
         # Record failures only for a known account. Never create an account-
         # enumeration side channel or store the submitted username/password.

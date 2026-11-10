@@ -71,6 +71,7 @@ public_form_rate_limiter = InMemoryRateLimiter()
 public_design_rate_limiter = InMemoryRateLimiter()
 public_verification_rate_limiter = InMemoryRateLimiter()
 email_verification_rate_limiter = InMemoryRateLimiter()
+password_reset_rate_limiter = InMemoryRateLimiter()
 
 
 def _normalized_ip(value: str | None) -> str | None:
@@ -253,4 +254,41 @@ def enforce_email_verification_rate_limit(
                 headers={
                     "Retry-After": str(decision.retry_after)
                 },
+            )
+
+
+def enforce_password_reset_rate_limit(
+    request: Request,
+    *,
+    action: str,
+    identifier: str,
+) -> None:
+    """Apply independent IP and normalized-identifier reset limits."""
+    if not settings.auth_rate_limit_enabled:
+        return
+    if action not in {"request", "confirm"}:
+        raise ValueError("Unsupported password reset action.")
+
+    normalized = identifier.strip().casefold()
+    fingerprint = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    address = get_client_address(request)
+    limit = (
+        settings.password_reset_request_rate_limit_requests
+        if action == "request"
+        else settings.password_reset_confirm_rate_limit_requests
+    )
+    window = settings.password_reset_rate_limit_window_seconds
+
+    for key in (
+        f"password-reset:{action}:ip:{address}",
+        f"password-reset:{action}:identifier:{fingerprint}",
+    ):
+        decision = password_reset_rate_limiter.check(
+            key, limit=limit, window_seconds=window
+        )
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+                headers={"Retry-After": str(decision.retry_after)},
             )

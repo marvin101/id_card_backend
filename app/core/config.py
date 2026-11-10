@@ -65,6 +65,11 @@ class Settings(BaseSettings):
         default=20, ge=1
     )
 
+    # Password reset throttling (per process; use edge/shared limits in production).
+    password_reset_rate_limit_window_seconds: int = Field(default=900, ge=1)
+    password_reset_request_rate_limit_requests: int = Field(default=3, ge=1)
+    password_reset_confirm_rate_limit_requests: int = Field(default=10, ge=1)
+
     # Public web origin used in revocable student-verification QR links.
     public_app_url: str = "https://campusid.co.in"
     # A dedicated key is recommended so public credentials can be rotated
