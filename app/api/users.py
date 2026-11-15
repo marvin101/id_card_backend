@@ -67,6 +67,7 @@ from app.models.auth_session import AuthSession
 from app.models.trusted_device import TrustedDevice
 from app.models.user_mfa_secret import UserMfaSecret
 from app.models.user_mfa_recovery_code import UserMfaRecoveryCode
+from app.models.password_reset_token import PasswordResetToken
 from app.schemas.auth import  (
     SchoolAccessCreate, 
     SchoolAccessResponse, 
@@ -1680,6 +1681,7 @@ def create_account(
 def update_account(
     user_uuid: UUID,
     data: AdminUserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1772,6 +1774,17 @@ def update_account(
         if "password" in values:
             user.password_hash = hash_password(values.pop("password"))
             now = datetime.now(timezone.utc)
+            # Invalidate every outstanding self-service reset token.
+            # This prevents old links from becoming usable if the feature
+            # is enabled again in the future.
+            db.execute(
+                update(PasswordResetToken)
+                .where(
+                    PasswordResetToken.user_id == user.id,
+                    PasswordResetToken.used_at.is_(None),
+                )
+                .values(used_at=now)
+            )
             db.execute(
                 update(TrustedDevice)
                 .where(
@@ -1780,6 +1793,18 @@ def update_account(
                 )
                 .values(revoked_at=now)
             )
+            db.add(SecurityEvent(
+                user_id=user.id,
+                event_type="admin_password_reset",
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:500] or None,
+                details={
+                    "initiated_by_user_id": current_user.id,
+                    "initiated_by_user_uuid": str(current_user.uuid),
+                    "sessions_revoked": True,
+                    "trusted_devices_revoked": True,
+                },
+            ))
 
         if "platform_role" in values:
             user.is_platform_admin = values["platform_role"] == "platform_admin"

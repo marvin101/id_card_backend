@@ -24,6 +24,7 @@ from app.models.security_event import SecurityEvent
 from app.models.trusted_device import TrustedDevice
 from app.models.email_verification_token import EmailVerificationToken
 from app.models.email_claim import EmailClaim
+from app.models.password_reset_token import PasswordResetToken
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def journey():
     engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.connect() as conn:
         conn.connection.create_function("gen_random_uuid", 0, lambda: uuid4().hex)
-    for model in (User, School, AuthSession, TrustedDevice, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode, SecurityEvent, EmailVerificationToken, EmailClaim,):
+    for model in (User, School, AuthSession, TrustedDevice, UserSchoolAccess, SchoolAccessRequest, UserMfaSecret, UserMfaRecoveryCode, SecurityEvent, EmailVerificationToken, EmailClaim, PasswordResetToken):
         model.__table__.create(engine)
     db = Session(engine, expire_on_commit=False)
     user = User(uuid=uuid4(), username="platform", full_name="Platform Admin", password_hash=hash_password("password123"),
@@ -146,8 +147,98 @@ def test_account_creation_edit_activation_password_and_self_protection(journey):
     assert client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code == 401
     assert client.patch(url, json={"is_active": True}, headers=h).status_code == 200
     assert client.get("/users/me", headers=headers(tokens["access_token"])).status_code == 401
-    assert client.patch(url, json={"password": "replacement123"}, headers=h).status_code == 200
-    assert client.post("/auth/login", json={"username": "worker", "password": "replacement123"}).status_code == 200
+
+    # A regular user must not be allowed to reset another user's password.
+    worker_tokens = login(client, "worker")
+    denied_reset = client.patch(
+        url,
+        json={"password": "unauthorized123"},
+        headers=headers(worker_tokens["access_token"]),
+    )
+    assert denied_reset.status_code == 403
+
+    # Create a fresh active session for the target user.
+    active_session = db.execute(
+        select(AuthSession).where(
+            AuthSession.user_id == user.id,
+            AuthSession.revoked_at.is_(None),
+        )
+    ).scalar_one()
+
+    # Create an active trusted device.
+    now = datetime.now(timezone.utc)
+    trusted_device = TrustedDevice(
+        id=uuid4(),
+        user_id=user.id,
+        token_hash="a" * 64,
+        device_name="Test device",
+        user_agent="CampusID test browser",
+        created_at=now,
+        expires_at=now + timedelta(days=30),
+    )
+    db.add(trusted_device)
+
+    # Create an outstanding self-service password-reset token.
+    reset_token = PasswordResetToken(
+        user_id=user.id,
+        token_hash="b" * 64,
+        expires_at=now + timedelta(minutes=30),
+    )
+    db.add(reset_token)
+    db.commit()
+
+    # Perform the administrator password reset.
+    password_reset = client.patch(
+        url,
+        json={"password": "replacement123"},
+        headers={
+            **h,
+            "User-Agent": "CampusID admin password reset test",
+        },
+    )
+    assert password_reset.status_code == 200
+
+    # Verify the actual session revocation.
+    db.refresh(active_session)
+    assert active_session.revoked_at is not None
+
+    # Verify the actual trusted-device revocation.
+    db.refresh(trusted_device)
+    assert trusted_device.revoked_at is not None
+
+    # Verify all outstanding password-reset tokens are invalidated.
+    db.refresh(reset_token)
+    assert reset_token.used_at is not None
+
+    # Verify the audit event.
+    event = db.execute(
+        select(SecurityEvent).where(
+            SecurityEvent.user_id == user.id,
+            SecurityEvent.event_type == "admin_password_reset",
+        )
+    ).scalar_one()
+
+    assert event.details == {
+        "initiated_by_user_id": admin.id,
+        "initiated_by_user_uuid": str(admin.uuid),
+        "sessions_revoked": True,
+        "trusted_devices_revoked": True,
+    }
+    assert event.ip_address is not None
+    assert event.user_agent == "CampusID admin password reset test"
+    assert "replacement123" not in str(event.details)
+
+    # The old password must no longer work.
+    assert client.post(
+        "/auth/login",
+        json={"username": "worker", "password": "password123"},
+    ).status_code == 401
+
+    # The new password must work.
+    assert client.post(
+        "/auth/login",
+        json={"username": "worker", "password": "replacement123"},
+    ).status_code == 200
     created = client.post("/users/accounts", json={"username": "new-user", "full_name": "New", "password": "password123", "email": "new@example.test"}, headers=h)
     assert created.status_code == 201 and "password" not in created.text
     assert client.post("/users/accounts", json={"username": "other-user", "full_name": "Other", "password": "password123", "email": "NEW@example.test"}, headers=h).status_code == 409
