@@ -19,7 +19,9 @@ from app.models import (
     StudentAuditEvent,
     User,
     UserSchoolAccess,
-    EmailVerificationToken
+    EmailVerificationToken,
+    PasswordResetToken,
+    EmailOutbox,
 )
 
 

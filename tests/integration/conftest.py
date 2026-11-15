@@ -18,6 +18,7 @@ REQUIRED_TABLES = {
     "email_verification_tokens",
     "security_events",
     "password_reset_tokens",
+    "email_outbox",
 }
 
 

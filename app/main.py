@@ -36,6 +36,8 @@ from app.api.public_verification import (
     public_router as public_verification_router,
     student_router as student_verification_router,
 )
+from contextlib import asynccontextmanager
+from app.core.email_outbox import validate_encryption_key
 logger = logging.getLogger(__name__)
 
 
@@ -48,11 +50,17 @@ async def _internal_server_error_response(
         content={"detail": "Internal server error"},
     )
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    validate_encryption_key()
+    logger.info("Email outbox encryption configuration validated.")
+    yield
 
 api = FastAPI(
     title="CampusID API",
     version=__version__,
     exception_handlers={500: _internal_server_error_response},
+    lifespan=lifespan,
 )
 
 @api.exception_handler(RequestValidationError)

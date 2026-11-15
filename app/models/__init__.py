@@ -27,6 +27,9 @@ from app.models.email_verification_token import EmailVerificationToken
 from app.models.trusted_device import TrustedDevice
 from app.models.email_claim import EmailClaim
 
+from app.models.password_reset_token import PasswordResetToken
+from app.models.email_outbox import EmailOutbox
+
 __all__ = [
     "AuthSession",
     "TrustedDevice",
@@ -56,8 +59,6 @@ __all__ = [
     "EmailVerificationToken",
     "EmailClaim",
     "PasswordResetToken",
+    "EmailOutbox",
 ]
 
-
-
-from app.models.password_reset_token import PasswordResetToken

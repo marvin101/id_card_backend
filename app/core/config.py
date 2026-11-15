@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     smtp_use_starttls: bool = True
     smtp_timeout_seconds: int = Field(default=15, ge=1, le=60)
 
+    # Fernet key dedicated to encrypting transactional outbox payloads.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    email_outbox_encryption_key: str = ""
+    email_outbox_poll_seconds: int = Field(default=3, ge=1, le=60)
+    email_outbox_lease_seconds: int = Field(default=120, ge=30, le=900)
+    email_outbox_max_attempts: int = Field(default=8, ge=1, le=20)
+
     # CORS
     cors_origins: str = (
         "http://localhost:49567,"

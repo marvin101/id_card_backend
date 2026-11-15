@@ -38,6 +38,7 @@ from app.schemas.auth import (
 from html import escape
 
 from app.core.email import send_email, EmailDeliveryError
+from app.core.email_outbox import enqueue_password_reset_email
 from app.core.password_reset import (
     issue_password_reset_token, consume_password_reset_token,
 )
@@ -176,37 +177,6 @@ _PASSWORD_RESET_GENERIC_MESSAGE = (
 _PASSWORD_RESET_INVALID = "This password reset link is invalid or has expired. Request a new link."
 
 
-def _send_password_reset_email(recipient: str, raw_token: str) -> None:
-    reset_url = (
-        f"{settings.public_app_url.rstrip('/')}"
-        f"/reset-password/{raw_token}"
-    )
-    send_email(
-        recipient=recipient,
-        subject="Reset your CampusID password",
-        text_body=(
-            "Hello,\n\n"
-            "We received a request to reset your CampusID password. "
-            "Open this link to choose a new password:\n\n"
-            f"{reset_url}\n\n"
-            "This link expires in 30 minutes and can only be used once. "
-            "All existing sessions and trusted devices will be signed out "
-            "after a successful reset.\n\n"
-            "If you did not request this, you can ignore this email."
-        ),
-        html_body=(
-            "<html><body><h2>Reset your CampusID password</h2>"
-            "<p>We received a request to reset your password.</p>"
-            f'<p><a href="{escape(reset_url, quote=True)}">Reset password</a></p>'
-            "<p>This link expires in 30 minutes and can only be used once.</p>"
-            "<p>All existing sessions and trusted devices will be signed out "
-            "after a successful reset.</p>"
-            "<p>If you did not request this, you can ignore this email.</p>"
-            "</body></html>"
-        ),
-    )
-
-
 @router.post("/password-reset/request", status_code=status.HTTP_202_ACCEPTED)
 def request_password_reset(
     data: PasswordResetRequest,
@@ -233,32 +203,14 @@ def request_password_reset(
                 user_agent=request.headers.get("user-agent", "")[:500] or None,
                 details={"delivery_requested": True},
             ))
+            # The token hash and encrypted email job commit atomically.
+            enqueue_password_reset_email(
+                db, user_id=user.id, recipient=user.email, raw_token=raw_token,
+            )
             db.commit()
         except Exception:
             db.rollback()
             raise
-        try:
-            _send_password_reset_email(user.email, raw_token)
-        except EmailDeliveryError:
-            # Do not reveal delivery or account state. Invalidate the token so
-            # an undelivered link cannot remain valid if logs leak it later.
-            db.execute(
-                update(PasswordResetToken)
-                .where(
-                    PasswordResetToken.token_hash == sha256(raw_token.encode("utf-8")).hexdigest(),
-                    PasswordResetToken.used_at.is_(None),
-                )
-                .values(used_at=datetime.now(timezone.utc))
-            )
-            db.add(SecurityEvent(
-                user_id=user.id,
-                event_type="password_reset_email_delivery_failed",
-                ip_address=get_client_address(request),
-                user_agent=request.headers.get("user-agent", "")[:500] or None,
-                details={"delivery_requested": True},
-            ))
-            db.commit()
-            logger.error("Password reset email delivery failed for user UUID %s.", user.uuid)
 
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
